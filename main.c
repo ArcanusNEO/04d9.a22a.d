@@ -454,6 +454,37 @@ open_mouse (void)
   return selected;
 }
 
+/* The firmware can corrupt the global profile-0 block (sensor init fields)
+ * when other blocks are written. These helpers snapshot it before a write and
+ * restore it afterward if it changed unexpectedly. No offsets or values are
+ * hardcoded. */
+static int
+snapshot_global (int fd, uint8_t saved[BLOCK])
+{
+  return read_profile (fd, 0, saved);
+}
+
+static int
+restore_global_if_changed (int fd, const uint8_t saved[BLOCK],
+                           const char *what)
+{
+  uint8_t cur[BLOCK];
+  if (read_profile (fd, 0, cur))
+    return -1;
+  if (memcmp (cur, saved, BLOCK) == 0)
+    return 0;
+  fprintf (stderr,
+           "Firmware corrupted profile 0 during %s; restoring snapshot.\n",
+           what);
+  if (write_profile (fd, 0, saved))
+    return -1;
+  if (read_profile (fd, 0, cur) || memcmp (cur, saved, BLOCK))
+    return -1;
+  printf (
+      "Restored profile 0 global configuration after firmware corruption.\n");
+  return 0;
+}
+
 /* Full guarded configuration-table write: preflight re-read, write,
  * readback, reselect current slot, final readback. `slot` is the wire slot to
  * reselect after the write; `target` is the intended full 128-byte block. */
@@ -462,8 +493,12 @@ commit_profile (int fd, uint8_t profile, uint8_t slot,
                 const uint8_t original[BLOCK], const uint8_t target[BLOCK])
 {
   uint8_t verify[BLOCK];
+  uint8_t global0[BLOCK];
+  bool guard = profile != 0;
   fprintf (stderr,
            "Preparing configuration write; all unrelated fields preserved.\n");
+  if (guard && snapshot_global (fd, global0))
+    fail ("Cannot snapshot global config; no write attempted.");
   uint8_t check_profile, check_slot;
   if (current (fd, &check_profile, &check_slot) || check_profile != profile
       || check_slot != slot || read_profile (fd, profile, verify)
@@ -479,6 +514,8 @@ commit_profile (int fd, uint8_t profile, uint8_t slot,
     fail ("Configuration written, but activation unverified.");
   if (read_profile (fd, profile, verify) || memcmp (verify, target, BLOCK))
     fail ("Post-activation readback differs. Inspect before further writes.");
+  if (guard && restore_global_if_changed (fd, global0, "profile write"))
+    fail ("GLOBAL RESTORE FAILED; profile 0 may remain corrupted.");
 }
 
 static int
@@ -763,6 +800,7 @@ main (int argc, char **argv)
   if (set_rate)
     {
       uint8_t raw = rate_to_raw (target_hz), current_raw;
+      uint8_t global0[BLOCK];
       if (get_rate (fd, profile, &current_raw))
         fail ("Cannot query current rate; no write attempted.");
       if (raw == current_raw)
@@ -771,10 +809,14 @@ main (int argc, char **argv)
           close (fd);
           return 0;
         }
+      if (snapshot_global (fd, global0))
+        fail ("Cannot snapshot global config; no write attempted.");
       if (send_command (fd, 0x03, profile, raw))
         fail ("Rate set command failed; no change confirmed.");
       if (get_rate (fd, profile, &current_raw) || current_raw != raw)
         fail ("Rate readback mismatch after write; state uncertain.");
+      if (restore_global_if_changed (fd, global0, "rate write"))
+        fail ("GLOBAL RESTORE FAILED; profile 0 may remain corrupted.");
       printf (
           "Report rate set to %u Hz (raw 0x%02x), profile %u.\n"
           "Applied via command 03; no configuration block was rewritten.\n",
@@ -785,7 +827,7 @@ main (int argc, char **argv)
     }
   if (flip_wheel)
     {
-      uint8_t buttons[BLOCK], changed[BLOCK], global0[BLOCK], after0[BLOCK];
+      uint8_t buttons[BLOCK], changed[BLOCK], global0[BLOCK];
       fprintf (stderr, "WARNING: firmware bug may corrupt the global sensor "
                        "config when the\n"
                        "button block is written. A runtime snapshot of "
@@ -796,7 +838,7 @@ main (int argc, char **argv)
        * firmware family. Snapshot profile 0 first, then detect and repair the
        * corruption after the write. No offsets or values are hardcoded: the
        * snapshot is read at runtime, so it also holds for other mice. */
-      if (read_profile (fd, 0, global0))
+      if (snapshot_global (fd, global0))
         fail ("Cannot snapshot global config; no write attempted.");
       if (read_buttons (fd, profile, buttons))
         fail ("Cannot read button config; no write attempted.");
@@ -821,20 +863,8 @@ main (int argc, char **argv)
           || memcmp (recheck, changed, BLOCK))
         fail (
             "READBACK FAILED; no activation or automatic rollback attempted.");
-      if (read_profile (fd, 0, after0) == 0
-          && memcmp (global0, after0, BLOCK) != 0)
-        {
-          fprintf (stderr, "Firmware corrupted profile 0 during button write; "
-                           "restoring snapshot.\n");
-          if (write_profile (fd, 0, global0))
-            fail ("GLOBAL RESTORE WRITE FAILED; profile 0 may remain "
-                  "corrupted.");
-          if (read_profile (fd, 0, after0) || memcmp (after0, global0, BLOCK))
-            fail ("GLOBAL RESTORE READBACK FAILED; profile 0 may remain "
-                  "corrupted.");
-          printf ("Restored profile 0 global configuration after firmware "
-                  "corruption.\n");
-        }
+      if (restore_global_if_changed (fd, global0, "button write"))
+        fail ("GLOBAL RESTORE FAILED; profile 0 may remain corrupted.");
       printf ("Wheel direction flipped: was %s, now %s (records 14/15: "
               "up/down events).\n",
               natural ? "normal" : "natural", natural ? "natural" : "normal");

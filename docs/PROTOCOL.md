@@ -315,10 +315,11 @@ command 0d. No activation command is sent. The direction is also reported by `sh
 **Firmware bug and mitigation:** writing the button block (0d) has been observed to
 zero parts of the global profile-0 configuration (the sensor SROM ID, sensor firmware
 size, and the sensor register area), which stops X/Y tracking until profile 0 is
-restored. The `wheel` command snapshots profile 0 before the write and, if the block
-changes after the write, writes the snapshot back. No offsets or values are
-hardcoded; the snapshot is read at runtime, so the mitigation applies to other mice
-of this firmware family too. A warning is printed before the write.
+restored. All write commands (`dpi`, `slot -c`, `rate`, `wheel`) snapshot profile 0
+before the write and, if the block changes afterward, write the snapshot back. No
+offsets or values are hardcoded; the snapshot is read at runtime, so the mitigation
+applies to other mice of this firmware family too. A warning is printed before the
+`wheel` write (the operation known to trigger the bug).
 
 The vendor driver reportedly had a bug that left this state inverted and could not
 restore it. The recorded write flipped `natural -> normal`; the direction field is

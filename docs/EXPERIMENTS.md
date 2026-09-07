@@ -223,11 +223,12 @@ Profile 1..5 do not hold these global fields (their offset 0..7 is `ff ff 00...`
 offset 5 is `00`), so the sensor init data lives only in profile 0. Restoring the
 baseline profile-0 block (via command 0c) restored tracking immediately.
 
-Mitigation implemented: `wheel` snapshots profile 0 at runtime before the 0d write
-and, if the block changes afterward, writes the snapshot back. No offsets or values
-are hardcoded, so it also applies to other mice of this firmware family. A warning is
-printed before the write. `snapshot`/`restore` provide a full-device recovery point
-and replaced the earlier automatic per-profile backup files.
+Mitigation implemented: every write command snapshots profile 0 at runtime before
+the write and, if the block changes afterward, writes the snapshot back. No offsets
+or values are hardcoded, so it also applies to other mice of this firmware family.
+`wheel` prints a warning before its write (the operation known to trigger the bug).
+`snapshot`/`restore` provide a full-device recovery point and replaced the earlier
+automatic per-profile backup files.
 
 ## Combination-key chord (side + right = DPI switch)
 
