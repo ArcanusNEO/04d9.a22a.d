@@ -115,3 +115,36 @@ quirks for selected PIDs, not this device's configuration commands.
 
 The C tool uses kernel HIDIOCGRAWINFO, HIDIOCGRDESCSIZE, HIDIOCGRDESC,
 HIDIOCSFEATURE and HIDIOCGFEATURE directly. It does not link against HIDAPI.
+
+## S6: Sensor identification (PAW33xx / PAW3333)
+
+Research date 2026-09-07. No local mouse was opened; no NDA datasheet was consulted.
+The sensor part is a strong inference, not a read die marking.
+
+- [libratbag PR #1561 diff](https://github.com/libratbag/libratbag/pull/1561.diff) —
+  `holtek8-shared.c` sensor table lists only two real sensors for the holtek8b
+  family: PAW3333 (200..8000 CPI, step 100) and PMW3320 (250..3500 CPI, step 250).
+- The local `raw * 100` evidence selects PAW3333 and rules out PMW3320 (step 250).
+- `bcdDevice 0101` maps to `SensorType=PAW3333` in the PR's device data
+  (`data/devices/genesis-krypton-750.device`).
+- [PR comment](https://github.com/libratbag/libratbag/pull/1561#issuecomment-2693164941) —
+  sibling E-Signal LUOM G10 (04d9:a09f) reported as PAW3335.
+- [libratbag issue 1858](https://github.com/libratbag/libratbag/issues/1858) —
+  another Holtek mouse (04d9:a09e) reported as PAW3327.
+- [E-Signal HT68FB560 page](http://www.e-signal.com.tw/ht68fb560-1/) —
+  HT68FB560 described as a gaming-mouse reference design "pairs with mainstream
+  laser sensors"; no specific part name.
+- [QMK pmw3320.h](https://github.com/qmk/qmk_firmware/blob/master/drivers/sensors/pmw3320.h) —
+  PMW3320 has 0x42 = burst-read register but no public 0x2e; used to rule it out.
+- [QMK pmw3325.c](https://github.com/qmk/qmk_firmware/blob/master/drivers/sensors/pmw3325.c) —
+  0x2e appears only as a value, not a register; confirms register maps are NDA'd
+  for the PAW33xx family and must not be invented.
+
+The decisive non-invasive signature is the observed six-bit wrap: raw 64 -> 0 and
+raw 80 -> 16, matching a 6-bit resolution register driven by `raw * 100`. Profile
+fields `sensor_srom_id = 0x03`, `sensor_firmware_size = 0x0ffe`, and register pairs
+`(0x2e, 0x10)`/`(0x42, 0x00)` remain undecodable without the NDA datasheet.
+
+Conclusion recorded here: inferred PixArt PAW3333 (PAW33xx family), MCU Holtek
+HT68FB550/560 family, SPI sensor, CPI = raw * 100 with 6-bit resolution and mod-64
+wrap. Definitive identification requires opening the device or the NDA datasheet.

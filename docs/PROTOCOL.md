@@ -199,19 +199,39 @@ Profile 0 carries candidate global fields that are mostly absent in profile 1.
 ### DPI encoding and limits
 
 For the tested slot/configuration, `X low byte = DPI / 100`: 0c=1200, 20=3200,
-10=1600. The two writes and user feedback support using X as the shared setting.
+10=1600. The writes and user feedback support using X as the shared setting.
 No verified dynamic shared/independent XY switch was found. The public driver's
 `independent_xy` comes from host-side sensor metadata, not a mode bit it reads.
 
-CLI set accepts 100..8000 by 100, changes `84 + slot - 1`, and preserves both
-candidate high masks. If the selected X high-mask bit is set, writes are refused.
-Displayed values use low bytes only, including untested/inactive slots. A reported
-22400 in an inactive slot does not establish 22400 DPI capability. Count and enable
-mask are displayed using the reference interpretation but never normalized/written.
+The sensor is inferred to be a PixArt PAW33xx part (PAW3333 family, see
+[SOURCES.md](SOURCES.md) S6). It exposes a **6-bit resolution register**, so only
+raw 0..63 map monotonically to 0..6300 CPI. Raw values 64..255 wrap modulo 64:
 
-Restore may reinstate a backed-up low-byte value outside the set command's range.
-It still requires the inspected scales, compatible layout and clear selected X
-high-mask bit, and permits no unrelated byte differences.
+| raw | raw mod 64 | effective CPI |
+| ---: | ---: | ---: |
+| 12 | 12 | 1200 |
+| 16 | 16 | 1600 |
+| 32 | 32 | 3200 |
+| 62 | 62 | 6200 (fast) |
+| 63 | 63 | 6300 |
+| 64 | 0 | 0 (minimum; feels very slow) |
+| 80 | 16 | 1600 |
+
+This empirically explains every observed anomaly: 6400 (raw 64) became the slowest,
+8000 (raw 80) behaved like 1600, and "6 is faster than 7" (raw 62 > raw 80). It is
+consistent with the firmware passing the low six bits of the host value to the sensor.
+
+The CLI therefore accepts `set`/`plan` DPI from 100..6300 by 100, writes only
+`84 + slot - 1`, and preserves both candidate high masks. If the selected X
+high-mask bit is set, writes are refused. Displayed values apply the six-bit mask,
+including untested/inactive slots, so a stored 224 (raw 224) is reported as
+224 & 63 = 32, i.e. 3200 CPI, not 22400. Count and enable mask are displayed using
+the reference interpretation but never normalized/written.
+
+Restore may reinstate a backed-up low-byte value outside the set command's range
+(it also re-applies the six-bit mask for display). It still requires the inspected
+scales, compatible layout and clear selected X high-mask bit, and permits no
+unrelated byte differences.
 
 ### Button records
 

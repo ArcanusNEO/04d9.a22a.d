@@ -16,10 +16,11 @@
 #include <unistd.h>
 
 /* Experimental API B support for the inspected 04d9:a22a revision 0101.
- * X is assumed to drive both axes. Sensor range / shared mode are unverified.
- * 100..8000 is a conservative software limit, not a discovered hardware limit.
+ * X is assumed to drive both axes. Sensor is inferred to be PixArt PAW33xx
+ * (PAW3333 family) over SPI, CPI = raw * 100 with a 6-bit resolution register:
+ * raw >= 64 wraps modulo 64, so the effective range is raw 0..63 (0..6300 CPI).
  */
-enum { BLOCK = 128, BACKUP = 144 };
+enum { BLOCK = 128, BACKUP = 144, RES_BITS = 6, RAW_MASK = 63, MAX_DPI = 6300 };
 static const uint8_t descriptor[] = {
     0x06,0x00,0xff,0x0a,0x00,0xff,0xa1,0x01,0x15,0x00,0x26,0xff,0x00,0x09,0x20,0x75,
     0x08,0x95,0x40,0x81,0x02,0x09,0x21,0x91,0x02,0x09,0x22,0x95,0x08,0xb1,0x02,0xc0
@@ -124,7 +125,7 @@ static int write_profile(int fd, uint8_t profile, const uint8_t data[BLOCK])
 
 static unsigned raw_dpi(const uint8_t data[BLOCK], unsigned slot, bool y)
 {
-    return data[(y ? 92 : 84) + slot - 1];
+    return data[(y ? 92 : 84) + slot - 1] & RAW_MASK;
 }
 
 static void edit_dpi(uint8_t data[BLOCK], unsigned slot, unsigned dpi)
@@ -248,6 +249,30 @@ static int open_mouse(void)
     return selected;
 }
 
+/* Full guarded configuration-table write: backup, preflight re-read, write,
+ * readback, reselect current slot, final readback. `slot` is the wire slot to
+ * reselect after the write; `target` is the intended full 128-byte block. */
+static void commit_profile(int fd, uint8_t profile, uint8_t slot,
+                           const uint8_t original[BLOCK], const uint8_t target[BLOCK])
+{
+    uint8_t verify[BLOCK];
+    save_backup(profile, slot, original);
+    fprintf(stderr, "Preparing configuration write; all unrelated fields preserved.\n");
+    uint8_t check_profile, check_slot;
+    if (current(fd, &check_profile, &check_slot) || check_profile != profile ||
+        check_slot != slot || read_profile(fd, profile, verify) || memcmp(verify, original, BLOCK))
+        fail("State changed during preparation; nothing written.");
+    if (write_profile(fd, profile, target))
+        fail("WRITE FAILED; state may be partial. Backup retained. Do not retry blindly.");
+    if (read_profile(fd, profile, verify) || memcmp(verify, target, BLOCK))
+        fail("READBACK FAILED; backup retained. No activation or automatic rollback attempted.");
+    if (send_command(fd, 0x04, profile, slot) || current(fd, &check_profile, &check_slot) ||
+        check_profile != profile || check_slot != slot)
+        fail("Configuration written, but activation unverified. Backup retained.");
+    if (read_profile(fd, profile, verify) || memcmp(verify, target, BLOCK))
+        fail("Post-activation readback differs; backup retained. Inspect before further writes.");
+}
+
 static int self_test(void)
 {
     uint8_t data[BLOCK], changed[BLOCK], p[9], backup[BACKUP];
@@ -260,7 +285,7 @@ static int self_test(void)
     for (unsigned i = 0; i < BLOCK; i++)
         data[i] = (uint8_t)(i * 17);
     for (unsigned slot = 1; slot <= 8; slot++) {
-        for (unsigned dpi = 100; dpi <= 25500; dpi += 100) {
+        for (unsigned dpi = 100; dpi <= MAX_DPI; dpi += 100) {
             memcpy(changed, data, BLOCK);
             edit_dpi(changed, slot, dpi);
             if (raw_dpi(changed, slot, false) * 100 != dpi ||
@@ -272,6 +297,14 @@ static int self_test(void)
             }
         }
     }
+    memcpy(changed, data, BLOCK);
+    edit_dpi(changed, 1, MAX_DPI);
+    changed[84] = 64;
+    if (raw_dpi(changed, 1, false) != 0)
+        return 1;
+    changed[84] = 80;
+    if (raw_dpi(changed, 1, false) != 16)
+        return 1;
     pack_backup(backup, 1, 1, data);
     if (!valid_backup(backup) || memcmp(backup + 12, data, BLOCK))
         return 1;
@@ -281,7 +314,7 @@ static int self_test(void)
             return 1;
         backup[i] ^= 1;
     }
-    puts("PASS: packets, all slots/8-bit encodings, unrelated-byte preservation, backup corruption.");
+    puts("PASS: packets, all slots/6-bit encodings, mod-64 wrap, unrelated-byte preservation, backup corruption.");
     return 0;
 }
 
@@ -293,13 +326,17 @@ int main(int argc, char **argv)
     bool plan = argc == 3 && !strcmp(argv[1], "plan");
     bool set = argc == 4 && !strcmp(argv[1], "set");
     bool restore = argc == 4 && !strcmp(argv[1], "restore");
-    if (!show && !plan && (!(set || restore) || strcmp(argv[3], "--allow-persistent-write"))) {
+    bool switch_slot = argc == 4 && !strcmp(argv[1], "switch");
+    bool set_count = argc == 4 && !strcmp(argv[1], "count");
+    if (!show && !plan && (!(set || restore || switch_slot || set_count) || strcmp(argv[3], "--allow-persistent-write"))) {
         fprintf(stderr, "Usage:\n  %s show\n  %s --self-test\n  %s plan DPI\n"
                 "  %s set DPI --allow-persistent-write\n"
+                "  %s switch SLOT --allow-persistent-write\n"
+                "  %s count N --allow-persistent-write\n"
                 "  %s restore BACKUP --allow-persistent-write\n"
-                "Experimental shared-X DPI, step 100, software limit 100..8000.\n"
+                "Experimental shared-X DPI, step 100, sensor 6-bit (100..6300).\n"
                 "Writes may persist. Close vendor software; do not unplug during writes.\n",
-                argv[0], argv[0], argv[0], argv[0], argv[0]);
+                argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
         return 2;
     }
     unsigned dpi = 0;
@@ -307,9 +344,27 @@ int main(int argc, char **argv)
         char *end;
         errno = 0;
         unsigned long value = strtoul(argv[2], &end, 10);
-        if (errno || end == argv[2] || *end || value < 100 || value > 8000 || value % 100)
-            fail("DPI must be 100..8000 in steps of 100; device not opened.");
+        if (errno || end == argv[2] || *end || value < 100 || value > MAX_DPI || value % 100)
+            fail("DPI must be 100..6300 in steps of 100 (raw 6-bit sensor); device not opened.");
         dpi = (unsigned)value;
+    }
+    unsigned target_slot = 0;
+    if (switch_slot) {
+        char *end;
+        errno = 0;
+        unsigned long value = strtoul(argv[2], &end, 10);
+        if (errno || end == argv[2] || *end || value < 1 || value > 8)
+            fail("Slot must be 1..8; device not opened.");
+        target_slot = (unsigned)value;
+    }
+    unsigned target_count = 0;
+    if (set_count) {
+        char *end;
+        errno = 0;
+        unsigned long value = strtoul(argv[2], &end, 10);
+        if (errno || end == argv[2] || *end || value < 1 || value > 8)
+            fail("Count must be 1..8; device not opened.");
+        target_count = (unsigned)value;
     }
     int fd = open_mouse();
     uint8_t profile, slot, original[BLOCK], target[BLOCK], verify[BLOCK];
@@ -321,7 +376,8 @@ int main(int argc, char **argv)
            raw_dpi(original, slot, true));
     printf("Candidate count=%u, enabled mask=0x%02x, scale X/Y=%u/%u\n",
            original[70], original[100], original[74], original[75]);
-    printf("Unverified high masks X/Y=0x%02x/0x%02x; displayed DPI uses low bytes only.\n",
+    printf("Sensor inferred PAW33xx 6-bit; raw>=64 wraps mod 64 (0..63 => 0..6300 CPI).\n"
+           "Unverified high masks X/Y=0x%02x/0x%02x; displayed DPI uses low 6 bits.\n",
            original[82], original[83]);
     if (show) {
         for (unsigned s = 1; s <= 8; s++)
@@ -329,6 +385,41 @@ int main(int argc, char **argv)
                    s, raw_dpi(original,s,false), raw_dpi(original,s,false)*100,
                    raw_dpi(original,s,true),
                    s <= original[70] && (original[100] & (1u << (s-1))) ? "yes" : "no");
+        close(fd);
+        return 0;
+    }
+    if (switch_slot) {
+        if (target_slot == slot) {
+            printf("Slot %u already active; no configuration write performed.\n", slot);
+            close(fd);
+            return 0;
+        }
+        uint8_t check_profile, check_slot;
+        if (send_command(fd, 0x04, profile, (uint8_t)target_slot) ||
+            current(fd, &check_profile, &check_slot) ||
+            check_profile != profile || check_slot != target_slot)
+            fail("Slot selection unverified; firmware may have rejected it (e.g. count too low).");
+        printf("Active slot changed to %u (wire index). X low=%u (~%u DPI), Y low=%u.\n"
+               "No configuration bytes were rewritten; only the active slot was selected.\n",
+               target_slot, raw_dpi(original, target_slot, false),
+               raw_dpi(original, target_slot, false) * 100,
+               raw_dpi(original, target_slot, true));
+        close(fd);
+        return 0;
+    }
+    if (set_count) {
+        if (original[74] != 100 || original[75] != 100)
+            fail("State outside inspected DPI layout; nothing written.");
+        memcpy(target, original, BLOCK);
+        target[70] = (uint8_t)target_count;
+        if (memcmp(original, target, BLOCK) == 0) {
+            printf("Count already %u; no configuration write performed.\n", target_count);
+            close(fd);
+            return 0;
+        }
+        commit_profile(fd, profile, slot, original, target);
+        printf("Resolution count set to %u (offset 70).\n"
+               "Active slot %u was reselected after the write.\n", target_count, slot);
         close(fd);
         return 0;
     }
@@ -359,21 +450,7 @@ int main(int argc, char **argv)
         close(fd);
         return 0;
     }
-    save_backup(profile, slot, original);
-    fprintf(stderr, "Preparing current X DPI write; Y and all unrelated fields preserved.\n");
-    uint8_t check_profile, check_slot;
-    if (current(fd, &check_profile, &check_slot) || check_profile != profile ||
-        check_slot != slot || read_profile(fd, profile, verify) || memcmp(verify, original, BLOCK))
-        fail("State changed during preparation; nothing written.");
-    if (write_profile(fd, profile, target))
-        fail("WRITE FAILED; state may be partial. Backup retained. Do not retry blindly.");
-    if (read_profile(fd, profile, verify) || memcmp(verify, target, BLOCK))
-        fail("READBACK FAILED; backup retained. No activation or automatic rollback attempted.");
-    if (send_command(fd, 0x04, profile, slot) || current(fd, &check_profile, &check_slot) ||
-        check_profile != profile || check_slot != slot)
-        fail("DPI table written, but activation unverified. Backup retained.");
-    if (read_profile(fd, profile, verify) || memcmp(verify, target, BLOCK))
-        fail("Post-activation readback differs; backup retained. Inspect before further writes.");
+    commit_profile(fd, profile, slot, original, target);
     printf("Verified configuration readback, estimated shared DPI=%u.\n"
            "Physical sensitivity and persistence across power cycles are not measured.\n",
            raw_dpi(target, slot, false) * 100);

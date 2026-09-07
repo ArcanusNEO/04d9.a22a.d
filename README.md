@@ -29,11 +29,12 @@ This remains an experimental single-device tool, not a universal Holtek driver.
 5. Avoid firmware updates, unexplained writes, system-wide installation and services.
 
 Implemented: device/revision/descriptor checks, current profile/slot reads, profile
-download, DPI inspection and dry-run diff, guarded set, backup and restricted restore.
+download, DPI inspection and dry-run diff, guarded set, backup and restricted restore,
+explicit resolution-count (`count`) and active-slot (`switch`) control.
 
-Not implemented: arbitrary profile/slot selection, independent XY control, DPI count
-editing, RGB, remapping, macros, firmware access, GUI, daemon, udev rule installation,
-or automatic support for other Holtek VID/PID combinations.
+Not implemented: independent XY control, RGB, remapping, macros, firmware access,
+GUI, daemon, udev rule installation, or automatic support for other Holtek VID/PID
+combinations.
 
 ## Build and offline tests
 
@@ -75,9 +76,24 @@ write. Do not execute it merely to build or test the project:
 sudo ./build/a22a-dpi set 3200 --allow-persistent-write
 ```
 
-The CLI accepts multiples of 100 from 100 to 8000. This is a software guardrail,
-**not** a discovered hardware range. Only 1200 (initial), 3200 and 1600 have user
-confirmation. An identical setting is a no-op without backup, write or activation.
+The CLI accepts multiples of 100 from 100 to 6300. The sensor is inferred to be a
+PixArt PAW33xx part with a 6-bit resolution register: raw values 0..63 map to
+0..6300 CPI, and raw >= 64 wraps modulo 64 (so 6400 acts as 0, 8000 as 1600). The
+6300 limit reflects this discovered wrap, not a proven maximum sensor rating. Only
+1200 (initial), 3200 and 1600 have direct user confirmation; the wrap is confirmed
+by the slot 6 (raw 62, fast) versus slot 7 (raw 80, slow) comparison.
+
+The active resolution slot can be switched, and the number of enabled slots can be
+changed. The firmware rejects selecting a slot above the configured count, so `count`
+may need raising first. Both commands are explicit authorized writes:
+
+```sh
+sudo ./build/a22a-dpi count 8 --allow-persistent-write
+sudo ./build/a22a-dpi switch 7 --allow-persistent-write
+```
+
+`switch` does not auto-modify `count`; it only sends the slot-selection command and
+reports failure if the firmware rejects it.
 
 Each actual modification first creates a flushed 0600 backup in `/tmp`, and prints
 its unique path. Restore takes the actual printed filename, not this placeholder:

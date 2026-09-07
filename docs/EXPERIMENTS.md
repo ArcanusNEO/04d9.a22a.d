@@ -136,14 +136,54 @@ Both transactions kept profile index 1 / slot 1, preserved Y low=20, reselected
 the same slot and were independently read after process exit. The final intended
 profile equals the 1200 baseline above with **only offset 84 replaced by 10 hex**.
 
+## Slot selection and count field
+
+A direct `04 {profile, slot}` selection was initially rejected while `count` (offset
+70) stayed at 1. The firmware accepted only slot 1 as active regardless of the
+`0xff` enable mask. `count 8` was then written with owner authorization; backup
+`/tmp/a22a-dpi-backup-cKJRD7` records the pre-change count=1 state. Afterward
+`switch` selected slots normally.
+
+The `switch` subcommand was later changed to no longer auto-modify `count`; it sends
+only the `04` selection and reports failure if the firmware rejects it. `count N`
+remains the explicit way to change offset 70.
+
+Owner-observed speed comparison after enabling all slots:
+
+| Slot | raw (X) | raw mod 64 | effective CPI | Owner observation |
+| --- | ---: | ---: | ---: | --- |
+| 6 | 62 | 62 | 6200 | fast |
+| 7 | 80 | 16 | 1600 | slower than slot 6 |
+
+This is the definitive signature of a six-bit resolution register: raw 80 wraps to
+16, so slot 7 behaves as 1600 CPI, while slot 6 (raw 62) is 6200 CPI. It confirms the
+wrap hypothesis and, together with `raw * 100`, points to a PixArt PAW3333-family
+sensor (see [SOURCES.md](SOURCES.md) S6).
+
+## Sensor inference
+
+Recorded as inference, not a read die marking:
+
+- CPI = raw * 100, matching libratbag's PAW3333 entry (200..8000, step 100).
+- Six-bit resolution register: raw >= 64 wraps modulo 64; effective 0..6300 CPI.
+- This explains 6400 (raw 64 -> 0) feeling slowest, 8000 (raw 80 -> 16) acting as
+  1600, and the earlier order-dependent 6400->6300 observations (bit 6 set then
+  cleared masks/wraps the six-bit field).
+- PMW3320 is ruled out by step 250 vs the observed step 100.
+- PAW3333/PAW3335 register maps are NDA; `sensor_srom_id = 0x03` and register pairs
+  `(0x2e,0x10)/(0x42,0x00)` are not decoded.
+
+The CLI now limits `set`/`plan` to 100..6300 and displays stored raw values through
+the six-bit mask, so an inactive 224 is reported as 32 (3200 CPI), not 22400.
+
 ## What remains unmeasured
 
 - Physical X/Y counts per inch and their before/after ratios.
 - Whether another firmware configuration can enable an independent Y table.
 - Whether writing a profile without 04 would apply the new DPI immediately.
 - Persistence after unplug/replug, restart, suspend or hardware DPI-button use.
-- Other slots/profiles, values outside the successful tests, sensor limits and high bits.
 - Recovery after partial transfers, physical disconnects or failed activation.
+- The exact PAW33xx part number, which requires opening the mouse or the NDA datasheet.
 
 No additional writes should be inferred as authorized by this record. Future
 experiments must state the intended changes, potential persistence, backup and
