@@ -151,5 +151,17 @@ verified firmware rescue procedure in this project.
 6. Add profile/slot selection, rate, RGB or remapping only after targeted evidence and
    tests exist. Do not transplant the reference driver's whole-profile normalization.
 
+## Known limitation / deferred items
+
+- Combination-key slot switching (side button + right button) behaves like the DPI
+  cycle action but is not represented in the 16 single-button records. Its trigger
+  is likely a firmware-level mapping or an undecoded configuration field (e.g. the
+  unknown `0x0c` button types or unknown offsets 65..69/76..81/101..102). The
+  original vendor driver reportedly cannot modify this combination either. Pending
+  further evidence (vendor-software capture or agreed single-field probing), no
+  modification or disabling is implemented. Do not guess unknown bytes.
+- `sensor_srom_id = 0x03` and register pairs `(0x2e,0x10)/(0x42,0x00)` remain
+  undecoded without the NDA sensor datasheet.
+
 No firmware dumping/flashing, bootloader entry, random command probing, generic raw
 write interface or implicit installation is within the current project goals.
