@@ -159,7 +159,7 @@ no report-ID prefix there. It reads into 65 bytes to detect oversized reports.
 ### Write transaction
 
 1. Read original profile, construct a copy with only the selected X low byte changed.
-2. Create/flush/report a backup, then recheck the active state and full original block.
+2. Recheck the active state and full original block.
 3. Send 0c with ARG0=profile and ARG1=128 decimal.
 4. GET_FEATURE readiness must echo command/profile and show remaining=128.
 5. Write zero placeholder plus the first 64 payload bytes to hidraw (65-byte call).
@@ -278,29 +278,38 @@ record is `type(0x04) pad event pad`; event 0x01 = up, 0x02 = down. Normal layou
 is record 14 = up, record 15 = down. Swapping the two event bytes inverts scrolling.
 
 The `wheel` subcommand flips the current direction by swapping only those two event
-bytes. It preserves every other byte, backs up the block, and verifies a full
-readback after writing via command 0d. No activation command is sent. The direction
-is also reported by `show`.
+bytes. It preserves every other byte and verifies a full readback after writing via
+command 0d. No activation command is sent. The direction is also reported by `show`.
+
+**Firmware bug and mitigation:** writing the button block (0d) has been observed to
+zero parts of the global profile-0 configuration (the sensor SROM ID, sensor firmware
+size, and the sensor register area), which stops X/Y tracking until profile 0 is
+restored. The `wheel` command snapshots profile 0 before the write and, if the block
+changes after the write, writes the snapshot back. No offsets or values are
+hardcoded; the snapshot is read at runtime, so the mitigation applies to other mice
+of this firmware family too. A warning is printed before the write.
 
 The vendor driver reportedly had a bug that left this state inverted and could not
 restore it. The recorded write flipped `inverted -> normal`; the direction field is
 now a supported, reversible setting.
 
-## Backup format
+## Snapshot format
 
-Exactly 144 bytes; explicit byte layout, not an ABI-dependent C struct:
+The `snapshot`/`restore` commands use a full-device snapshot, replacing the earlier
+per-profile backup files. Layout is explicit, not an ABI-dependent C struct:
 
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
-| 0 | 8 | ASCII A22ADPI1 |
-| 8 | 2 | bcdDevice, little endian; 01 01 |
-| 10 | 1 | Profile index |
-| 11 | 1 | One-based slot |
-| 12 | 128 | Full profile before modification |
-| 140 | 4 | FNV-1a32 of bytes 0..139, little endian |
+| 0 | 9 | ASCII A22ASNAP |
+| 9 | 2 | Format version, little endian; 01 00 |
+| 11 | 128 | Profile 0 config block |
+| 139 | 128 | Profile 0 button block |
+| ... | ... | Repeating config+button pairs for profiles 1..5 |
+| 1547 | 4 | FNV-1a32 of bytes 0..1546, little endian |
 
-FNV basis=2166136261, multiplier=16777619, wrapping uint32_t. This detects accidental
-corruption, not malicious edits. The signature implies A22A but does not identify a
-physical unit. Files are created exclusively by mkstemp with mode 0600, flushed
-before writing the mouse, and never deleted automatically. A backup represents
-configuration, not firmware or a complete device image.
+Total size is 1551 bytes. FNV basis=2166136261, multiplier=16777619, wrapping
+uint32_t. The checksum detects accidental corruption, not malicious edits. The magic
+implies A22A but does not identify a physical unit; no serial number is stored.
+`snapshot FILE` writes mode 0600; `restore FILE` validates magic, version and checksum
+before writing anything, then writes profile 0 config first (sensor init fields),
+then profiles 1..5 config, then all button blocks.

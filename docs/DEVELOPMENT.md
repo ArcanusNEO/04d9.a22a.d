@@ -11,6 +11,25 @@ The source files were transferred unchanged from the successful temporary driver
 Do not confuse the old `/tmp/opencode/` binaries or old notes with this project's
 maintained documentation. Old notes predated the two successful physical writes.
 
+## Code style
+
+Source is formatted with clang-format using the project `.clang-format`
+(`BasedOnStyle: GNU`, `SortIncludes: Never`). Format before committing:
+
+```sh
+clang-format -i main.c main-test.c
+clang-format --dry-run --Werror main.c main-test.c
+```
+
+Conventions:
+
+- C11, `-std=c11 -Wall -Wextra -Wpedantic -Werror` must stay warning-clean.
+- Static helper functions per protocol stage; no public library ABI yet.
+- Explicit magic/checksum fields in binary formats, not compiler-dependent structs.
+- No hardcoded device-specific values; read configuration at runtime so the tool
+  applies to other mice of the same firmware family.
+- Never store or match a serial number; the target device has none.
+
 ## Build commands
 
 Run these from the project root:
@@ -69,10 +88,10 @@ those paths already contain something important. Never run builds as root.
 | raw_dpi / edit_dpi | Low-byte DPI interpretation and one-byte X edit |
 | scroll_set_direction / scroll_is_inverted | Wheel direction decode and flip |
 | get_active_profile / set_active_profile | Profile query (82) and switch (02) with readback |
-| pack_backup / valid_backup / save_backup / load_backup | Fixed layout, corruption check, exclusive temporary backup |
-| commit_profile | Guarded profile write: backup, preflight, write, readback, activate |
-| main | CLI dispatch, layout guards, dry run, no-op, preflight |
-| self_test | Pure packet, encoding/preservation and backup tests |
+| pack_snapshot / valid_snapshot / unpack_snapshot / read_snapshot / save_snapshot / load_snapshot | Full-device snapshot, checksum, save/restore |
+| commit_profile | Guarded profile write: preflight, write, readback, activate |
+| main | CLI dispatch, layout guards, dry run, no-op, preflight, wheel bug mitigation |
+| self_test | Pure packet, encoding/preservation and snapshot tests |
 | main-test.c | Includes implementation under mocked syscall names; never opens a device |
 
 Small static functions keep protocol stages understandable without introducing a
@@ -82,8 +101,8 @@ scope rather than turning this into a generic arbitrary-command sender.
 ## Test coverage and gaps
 
 Self-tests check checksum examples, eight slots across all positive eight-bit raw
-values, preservation of all unrelated bytes, backup roundtrip and detection of a
-single-bit corruption in each backup byte. The broad offline encoding sweep is
+values, preservation of all unrelated bytes, snapshot roundtrip and detection of a
+single-bit corruption in each snapshot byte. The broad offline encoding sweep is
 not permission to write all those values to hardware; the `dpi` subcommand retains
 its 100..6300 guardrail.
 
@@ -93,9 +112,9 @@ queued data. Mock calls replace ioctl, read, write and poll at compilation time.
 
 ASan/UBSan and static analysis passed for the saved code. Hardware evidence includes
 successful show/plan, reads and two actual DPI changes with full readback and owner
-confirmation. The project-save/build step did not change the mouse again.
+confirmation. The snapshot/restore roundtrip was verified against the live device.
 
-Gaps: discovery failures are not fully mocked; CLI/filesystem/backup failure paths
+Gaps: discovery failures are not fully mocked; CLI/filesystem/snapshot failure paths
 are not comprehensively tested; the physical restore path, unplug failures, different
 revisions, independent XY, precision CPI measurements and persistence remain untested.
 Sanitizers and mocks do not establish firmware safety.
@@ -118,9 +137,9 @@ device USB transfers. No automatic live test target exists, and no `make` target
 should execute a privileged hardware operation.
 
 For a new write experiment, agree on target and final state, close vendor software,
-avoid hardware DPI/profile buttons, keep the cable attached and record the backup.
-Run `plan` first to preview the exact byte changes; writing subcommands (`dpi`,
-`slot`, `rate`, `wheel`, `restore`) apply immediately without a
+avoid hardware DPI/profile buttons, keep the cable attached and save a `snapshot`
+as a recovery point first. Run `plan` to preview the exact byte changes; writing
+subcommands (`dpi`, `slot`, `rate`, `wheel`) apply immediately without a
 confirmation gate. Read again in a new process and obtain functional confirmation.
 Do not repeat a write just to produce a nicer log; repeated configuration writes
 may consume flash life.
@@ -130,9 +149,10 @@ may consume flash life.
 - Permission/discovery failure: verify device and revision, use sudo if appropriate;
   do not solve it with blanket chmod or relaxed descriptor matching.
 - Unexpected layout/high bit/scale: stop and investigate. Do not normalize unknown bytes.
-- State changed during preparation: no write occurred, but a backup may have been created.
-- Write/readiness/partial transfer failure: state may be partial. Retain backup and output;
-  do not blindly retry, switch profiles or assume a safe automatic rollback.
+- State changed during preparation: no write occurred.
+- Write/readiness/partial transfer failure: state may be partial. Use a `snapshot`
+  taken beforehand to recover; do not blindly retry, switch profiles or assume a
+  safe automatic rollback.
 - Readback mismatch: no subsequent activation is attempted. Investigate before writing more.
 - Activation failure: table may be written even though effective DPI is uncertain.
 - Restore refused: this is deliberately not full recovery; unrelated differences or

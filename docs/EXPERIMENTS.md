@@ -202,6 +202,30 @@ The backup of the inverted state is `/tmp/a22a-dpi-backup-yjc5e7`.
 The interface was then consolidated into a single `wheel` action that toggles the
 current direction, rather than requiring an explicit `normal`/`inverted` argument.
 
+## Firmware bug: button-block write corrupts global config
+
+Writing the button block (command 0d) was found to zero parts of the global profile-0
+configuration. After one `wheel` write, the mouse stopped tracking X/Y movement
+(buttons and wheel kept working) across all profiles, and replugging did not help.
+
+Comparing profile 0 against the earlier recorded baseline showed 24 bytes zeroed or
+changed, most critically:
+
+- offset 5 = sensor SROM ID (`03` -> `00`)
+- offset 6..7 = sensor firmware size (`fe 0f` -> `00 00`)
+- offset 48 = sensor register area first byte (`ff` -> `00`)
+- offsets 16..47 DPI-indicator/illumination table bytes
+
+Profile 1..5 do not hold these global fields (their offset 0..7 is `ff ff 00...` and
+offset 5 is `00`), so the sensor init data lives only in profile 0. Restoring the
+baseline profile-0 block (via command 0c) restored tracking immediately.
+
+Mitigation implemented: `wheel` snapshots profile 0 at runtime before the 0d write
+and, if the block changes afterward, writes the snapshot back. No offsets or values
+are hardcoded, so it also applies to other mice of this firmware family. A warning is
+printed before the write. `snapshot`/`restore` provide a full-device recovery point
+and replaced the earlier automatic per-profile backup files.
+
 ## Combination-key chord (side + right = DPI switch)
 
 The owner reported that holding the upper side button plus the right button switches

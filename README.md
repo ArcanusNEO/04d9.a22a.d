@@ -123,18 +123,27 @@ The wheel scroll direction can be flipped with a single toggle (button block com
 sudo ./build/main wheel
 ```
 
+**Firmware-bug warning:** writing the button block can corrupt the global
+profile-0 sensor configuration on this firmware family. `wheel` prints a warning,
+snapshots profile 0, and automatically restores it if corruption is detected.
+If movement stops after `wheel`, run `restore` with a previously saved snapshot.
+
 The current wheel direction is also shown by `show`.
 
-Each actual modification first creates a flushed 0600 backup in `/tmp`, and prints
-its unique path. Restore takes the actual printed filename, not this placeholder:
+### Snapshot and restore
+
+`snapshot` saves the full device state (all six profiles' config and button blocks)
+to a file; `restore` writes that state back. No automatic backup files are created
+by other subcommands:
 
 ```sh
-sudo ./build/main restore /tmp/a22a-dpi-backup-XXXXXX
+sudo ./build/main snapshot /path/to/a22a.snap
+sudo ./build/main restore /path/to/a22a.snap
 ```
 
-Restore is a restricted current-X undo, not disaster recovery. It rejects changes
-outside the current X low byte, mismatched profile/slot, or invalid backup data.
-It also saves the pre-restore state. No automatic rollback is attempted after failure.
+Snapshots carry a checksum and are validated before restore. They do not encode a
+serial number; they hold configuration only. Keep a snapshot from a known-good state
+as a recovery point before experimenting.
 
 ## Safety boundaries
 
@@ -144,8 +153,7 @@ It also saves the pre-restore state. No automatic rollback is attempted after fa
   related devices. Do not unplug, stop the process, or press DPI/profile buttons.
 - Advisory locking coordinates this tool, not unrelated applications or device buttons.
 - No updater, bootloader, firmware-memory, unknown-command or password scanning exists.
-- Backups in `/tmp` can disappear on reboot. Keep the original file securely if durable
-  recovery is needed; documentation snapshots are not automatically restorable backups.
+- No automatic backup is created; use `snapshot`/`restore` explicitly.
 - No serial number exists; the program cannot distinguish physically identical units.
 
 ## Documentation map
@@ -159,6 +167,7 @@ It also saves the pre-restore state. No automatic rollback is attempted after fa
 | [references/README.md](references/README.md) | Four complete official PDFs, retrieval URLs and SHA-256 hashes |
 | `main.c` | Current working driver and encoding self-tests |
 | `main-test.c` | Offline mocked transport tests |
+| `.clang-format` | GNU-based clang-format style (SortIncludes: Never) |
 | `Makefile` | Build, test, sanitize, analyze and clean targets |
 
 Build output stays in `build/`. Nothing is installed automatically. No Git repository
