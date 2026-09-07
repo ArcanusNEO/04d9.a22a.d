@@ -24,7 +24,7 @@ make analyze
 
 | Target | Action | Hardware access |
 | --- | --- | --- |
-| all (default) | Build build/a22a-dpi | None |
+| all (default) | Build build/main | None |
 | test | Build/run encoder self-test and mocked transport executable | None |
 | sanitize | Separate mocked executable with ASan and UBSan | None |
 | analyze | GCC -fanalyzer on both sources, output to /dev/null | None |
@@ -48,10 +48,10 @@ No install target is provided; run the built executable directly.
 Manual build, if Make is unavailable:
 
 ```sh
-cc -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror a22a-dpi.c -o /tmp/a22a-dpi-manual
-cc -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror a22a-dpi-test.c -o /tmp/a22a-dpi-test-manual
-/tmp/a22a-dpi-manual --self-test
-/tmp/a22a-dpi-test-manual
+cc -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror main.c -o /tmp/main-manual
+cc -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror main-test.c -o /tmp/main-test-manual
+/tmp/main-manual --self-test
+/tmp/main-test-manual
 ```
 
 These examples create only their stated temporary binaries; choose unused names if
@@ -68,11 +68,12 @@ those paths already contain something important. Never run builds as root.
 | ready / write_block / write_profile / write_buttons | Synchronize 128/64/0 remaining counts around two output chunks |
 | raw_dpi / edit_dpi | Low-byte DPI interpretation and one-byte X edit |
 | scroll_set_direction / scroll_is_inverted | Wheel direction decode and flip |
+| get_active_profile / set_active_profile | Profile query (82) and switch (02) with readback |
 | pack_backup / valid_backup / save_backup / load_backup | Fixed layout, corruption check, exclusive temporary backup |
 | commit_profile | Guarded profile write: backup, preflight, write, readback, activate |
 | main | CLI dispatch, layout guards, dry run, no-op, preflight |
 | self_test | Pure packet, encoding/preservation and backup tests |
-| a22a-dpi-test.c | Includes implementation under mocked syscall names; never opens a device |
+| main-test.c | Includes implementation under mocked syscall names; never opens a device |
 
 Small static functions keep protocol stages understandable without introducing a
 public library ABI before a second user exists. Preserve the minimal single-slot
@@ -104,8 +105,8 @@ Sanitizers and mocks do not establish firmware safety.
 Read-only-at-the-configuration-level checks:
 
 ```sh
-sudo ./build/a22a-dpi show
-sudo ./build/a22a-dpi plan 3200
+sudo ./build/main show
+sudo ./build/main plan 3200
 ```
 
 Expected last accepted state: profile 1, slot 1, X low=16 (~1600), Y low=20,

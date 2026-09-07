@@ -114,14 +114,14 @@ of constructing USB setup packets itself. Successful feature ioctls return 9 byt
 | CMD | Operation | Arguments and response | Current CLI |
 | --- | --- | --- | --- |
 | 00 | Echo | Four test bytes echoed from ARG0..3 | Historical probe only |
-| 82 | Active profile | ARG0 response is wire profile index | Used |
-| 83 | Active rate | ARG0 profile; ARG1 response is rate code | Historical probe only |
+| 82 | Get active profile | ARG0 response is wire profile index | Used |
+| 02 | Set active profile | ARG0 profile; verified by re-querying 82 | Used; 6 profiles |
+| 83 | Active rate | ARG0 profile; ARG1 response is rate code | Used |
 | 84 | Active resolution | ARG0 profile; ARG1 response is one-based slot | Used |
 | 8c | Read profile | ARG0 profile; reply ARG1=80 hex; two 64-byte inputs | Used |
 | 8d | Read buttons | Same block transport as 8c | Historical probe only |
 | 0c | Write profile | ARG0 profile, ARG1=80 hex, synchronized output chunks | Used; two writes passed |
 | 04 | Select resolution | ARG0 profile, ARG1 slot | Used to reselect current slot |
-| 83 | Get report rate | ARG0 profile; ARG1 response is the rate code | Used |
 | 03 | Set report rate | ARG0 profile, ARG1 rate code | Used; 1000 -> 500 confirmed |
 
 Rate encoding: 01=1000 Hz, 02=500 Hz, 04=250 Hz, 08=125 Hz. The active profile's
@@ -129,8 +129,17 @@ rate is a standalone command; it does not rewrite the 128-byte configuration blo
 Observed: profile 1 returned code 01 (1000 Hz) initially, then code 02 (500 Hz)
 after the owner-authorized `rate 500`. Profile 0 returned code 02 (500 Hz) on query.
 Profile indices are zero-based in the reference; resolution slots are one-based.
-The code accepts profile indices 0..5 and slots 1..8, but active profile 1 / slot 1
-is the only tested write destination.
+
+### Profile count
+
+Six profiles exist (indices 0..5), matching the reference driver's profile count.
+The owner confirmed all six switch successfully via command 02. Index 6 and above
+are silently rejected by the firmware: sending 02 {6} leaves the active profile
+unchanged. Read-only queries at out-of-range indices return defaults or garbage
+(profiles 6/7 return slot 02; profiles 8/9 return 0x55/0xaa), so query responses
+alone do not establish the valid profile range. Profile 0's configuration block is
+not a stable global template; its offset 2 changed from 0x3f to 0x00 after switching
+profiles, so offset 2 is not a reliable enabled-profiles bitmask.
 
 The configuration block's `enabled_rates` field (offset 64, observed 0x8f) is a
 candidate bitmask of rates the firmware offers, and was not modified by the 03
@@ -183,7 +192,7 @@ Profile 0 carries candidate global fields that are mostly absent in profile 1.
 | Offset | Length | Reference meaning / evidence |
 | --- | ---: | --- |
 | 0..1 | 2 | Unknown global bytes |
-| 2 | 1 | Enabled profiles; profile 0 observed 3f |
+| 2 | 1 | Candidate enabled-profiles bitmask; not stable (varies with active profile) |
 | 3..4 | 2 | Unknown |
 | 5 | 1 | Candidate sensor SROM ID, not a sensor model ID |
 | 6..7 | 2 | Candidate sensor firmware size, little endian |

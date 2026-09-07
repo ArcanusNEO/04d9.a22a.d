@@ -61,16 +61,36 @@ static int query(int fd, uint8_t command, uint8_t profile, uint8_t reply[9])
     return reply[0] == 0 && reply[1] == command ? 0 : -1;
 }
 
+enum { PROFILES = 6 };
+
+static int get_active_profile(int fd, uint8_t *profile)
+{
+    uint8_t reply[9];
+    if (query(fd, 0x82, 0, reply) || reply[2] >= PROFILES)
+        return -1;
+    *profile = reply[2];
+    return 0;
+}
+
 static int current(int fd, uint8_t *profile, uint8_t *slot)
 {
     uint8_t reply[9];
-    if (query(fd, 0x82, 0, reply) || reply[2] >= 6)
+    if (get_active_profile(fd, profile))
         return -1;
-    *profile = reply[2];
     if (query(fd, 0x84, *profile, reply) || reply[2] != *profile ||
         reply[3] < 1 || reply[3] > 8)
         return -1;
     *slot = reply[3];
+    return 0;
+}
+
+static int set_active_profile(int fd, uint8_t profile)
+{
+    uint8_t check;
+    if (send_command(fd, 0x02, profile, 0))
+        return -1;
+    if (get_active_profile(fd, &check) || check != profile)
+        return -1;
     return 0;
 }
 
@@ -417,17 +437,18 @@ int main(int argc, char **argv)
     bool slot_cmd = argc == 3 && !strcmp(argv[1], "slot");
     bool slot_count = argc == 5 && !strcmp(argv[1], "slot") &&
                       (!strcmp(argv[2], "-c") || !strcmp(argv[2], "--count"));
+    bool profile_cmd = argc == 3 && !strcmp(argv[1], "profile");
     if (!show && !plan && !set_dpi && !restore && !flip_wheel &&
-        !set_rate && !slot_cmd && !slot_count) {
+        !set_rate && !slot_cmd && !slot_count && !profile_cmd) {
         fprintf(stderr, "Usage:\n  %s show\n  %s --self-test\n  %s plan DPI\n"
                 "  %s dpi DPI\n"
-                "  %s slot SLOT\n"
                 "  %s slot [-c|--count N] SLOT\n"
                 "  %s rate HZ\n"
+                "  %s profile N\n"
                 "  %s wheel\n"
                 "  %s restore BACKUP\n"
                 "Experimental shared-X DPI, step 100, sensor 6-bit (100..6300).\n"
-                "Rate options: 125, 250, 500, 1000.\n"
+                "Rate options: 125, 250, 500, 1000. Profiles: 0..5.\n"
                 "Writes are immediate and may persist. Close vendor software; do not unplug.\n",
                 argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
         return 2;
@@ -459,6 +480,15 @@ int main(int argc, char **argv)
         if (errno || end == argv[3] || *end || value < 1 || value > 8)
             fail("Count must be 1..8; device not opened.");
         target_count = (unsigned)value;
+    }
+    unsigned target_profile = 0;
+    if (profile_cmd) {
+        char *end;
+        errno = 0;
+        unsigned long value = strtoul(argv[2], &end, 10);
+        if (errno || end == argv[2] || *end || value >= PROFILES)
+            fail("Profile must be 0..5; device not opened.");
+        target_profile = (unsigned)value;
     }
     unsigned target_hz = 0;
     if (set_rate) {
@@ -499,6 +529,20 @@ int main(int argc, char **argv)
                    s, raw_dpi(original,s,false), raw_dpi(original,s,false)*100,
                    raw_dpi(original,s,true),
                    s <= original[70] && (original[100] & (1u << (s-1))) ? "yes" : "no");
+        close(fd);
+        return 0;
+    }
+    if (profile_cmd) {
+        if (target_profile == profile) {
+            printf("Profile %u already active; no write performed.\n", profile);
+            close(fd);
+            return 0;
+        }
+        if (set_active_profile(fd, (uint8_t)target_profile))
+            fail("Profile switch unverified; current state unchanged or uncertain.");
+        printf("Active profile changed to %u.\n"
+               "Applied via command 02; no configuration block was rewritten.\n",
+               target_profile);
         close(fd);
         return 0;
     }

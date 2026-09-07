@@ -31,11 +31,12 @@ This remains an experimental single-device tool, not a universal Holtek driver.
 Implemented: device/revision/descriptor checks, current profile/slot reads, profile
 download, DPI inspection and dry-run diff, guarded DPI write, backup and restricted
 restore, active-slot selection and resolution-count control (`slot`), report rate
-(`rate`) control, and wheel direction toggle (`wheel`).
+(`rate`) control, active-profile switching (`profile`, 0..5) and wheel direction
+toggle (`wheel`).
 
-Not implemented: active-profile switching, independent XY control, RGB, remapping,
-macros, firmware access, GUI, daemon, udev rule installation, or automatic support
-for other Holtek VID/PID combinations.
+Not implemented: independent XY control, RGB, remapping, macros, profile copy/rename,
+firmware access, GUI, daemon, udev rule installation, or automatic support for other
+Holtek VID/PID combinations.
 
 ## Build and offline tests
 
@@ -63,8 +64,8 @@ connected. Root is needed on the inspected machine because hidraw is mode 0600.
 The program finds the device dynamically; do not hardcode `/dev/hidraw6`.
 
 ```sh
-sudo ./build/a22a-dpi show
-sudo ./build/a22a-dpi plan 3200
+sudo ./build/main show
+sudo ./build/main plan 3200
 ```
 
 Both commands send query requests via SET_FEATURE, but **do not write configuration**,
@@ -73,7 +74,7 @@ activate a slot or create backups. `plan` prints the proposed changed offsets.
 All other subcommands write immediately (no confirmation gate) and may persist:
 
 ```sh
-sudo ./build/a22a-dpi dpi 3200
+sudo ./build/main dpi 3200
 ```
 
 The CLI accepts multiples of 100 from 100 to 6300. The sensor is inferred to be a
@@ -88,9 +89,9 @@ changed. The firmware rejects selecting a slot above the configured count, so th
 count may need raising first:
 
 ```sh
-sudo ./build/a22a-dpi slot 7
-sudo ./build/a22a-dpi slot --count 8 7
-sudo ./build/a22a-dpi slot -c 8 7
+sudo ./build/main slot 7
+sudo ./build/main slot --count 8 7
+sudo ./build/main slot -c 8 7
 ```
 
 `slot SLOT` only selects the active slot; it does not auto-modify the count and
@@ -101,16 +102,25 @@ The report rate can be changed with command 03, independent of the configuration
 block. Options are 125, 250, 500 and 1000 Hz:
 
 ```sh
-sudo ./build/a22a-dpi rate 500
+sudo ./build/main rate 500
 ```
 
 The current rate is also shown by `show`.
+
+The active profile can be switched with command 02. Six profiles exist (indices
+0..5); the firmware silently rejects switching to index >= 6:
+
+```sh
+sudo ./build/main profile 0
+```
+
+The current profile is also shown by `show`.
 
 The wheel scroll direction can be flipped with a single toggle (button block command
 0d). This also recovers from the vendor driver's inverted-scroll bug:
 
 ```sh
-sudo ./build/a22a-dpi wheel
+sudo ./build/main wheel
 ```
 
 The current wheel direction is also shown by `show`.
@@ -119,7 +129,7 @@ Each actual modification first creates a flushed 0600 backup in `/tmp`, and prin
 its unique path. Restore takes the actual printed filename, not this placeholder:
 
 ```sh
-sudo ./build/a22a-dpi restore /tmp/a22a-dpi-backup-XXXXXX
+sudo ./build/main restore /tmp/a22a-dpi-backup-XXXXXX
 ```
 
 Restore is a restricted current-X undo, not disaster recovery. It rejects changes
@@ -147,8 +157,8 @@ It also saves the pre-restore state. No automatic rollback is attempted after fa
 | [docs/SOURCES.md](docs/SOURCES.md) | Pinned code sources, official documents, comparison and provenance |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Build/test workflow, code map, safeguards, next work |
 | [references/README.md](references/README.md) | Four complete official PDFs, retrieval URLs and SHA-256 hashes |
-| `a22a-dpi.c` | Current working driver and encoding self-tests |
-| `a22a-dpi-test.c` | Offline mocked transport tests |
+| `main.c` | Current working driver and encoding self-tests |
+| `main-test.c` | Offline mocked transport tests |
 | `Makefile` | Build, test, sanitize, analyze and clean targets |
 
 Build output stays in `build/`. Nothing is installed automatically. No Git repository

@@ -10,30 +10,30 @@ SANFLAGS = -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-f
 
 .PHONY: all test sanitize analyze clean
 
-all: build/a22a-dpi
+all: build/main
 
 build:
 	mkdir -p $@
 
-build/a22a-dpi: a22a-dpi.c Makefile | build
+build/main: main.c Makefile | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) $(LDFLAGS) -o $@ $< $(LDLIBS)
 
-build/a22a-dpi-test: a22a-dpi-test.c a22a-dpi.c Makefile | build
+build/main-test: main-test.c main.c Makefile | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) $(LDFLAGS) -o $@ $< $(LDLIBS)
 
-test: build/a22a-dpi build/a22a-dpi-test
-	./build/a22a-dpi --self-test
-	./build/a22a-dpi-test
+test: build/main build/main-test
+	./build/main --self-test
+	./build/main-test
 
-build/a22a-dpi-test-sanitize: a22a-dpi-test.c a22a-dpi.c Makefile | build
+build/main-test-sanitize: main-test.c main.c Makefile | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) $(LDFLAGS) $(SANFLAGS) -o $@ $< $(LDLIBS)
 
-sanitize: build/a22a-dpi-test-sanitize
-	./build/a22a-dpi-test-sanitize
+sanitize: build/main-test-sanitize
+	./build/main-test-sanitize
 
 analyze:
-	$(GCC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -fanalyzer -c a22a-dpi.c -o /dev/null
-	$(GCC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -fanalyzer -c a22a-dpi-test.c -o /dev/null
+	$(GCC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -fanalyzer -c main.c -o /dev/null
+	$(GCC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -fanalyzer -c main-test.c -o /dev/null
 
 clean:
 	$(RM) -r build

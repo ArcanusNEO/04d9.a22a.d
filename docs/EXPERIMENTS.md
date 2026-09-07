@@ -233,6 +233,20 @@ both: only slot 6 has its ninth bit set, giving X=318 and Y=320 (the sole slot u
 candidate; the CLI preserves the masks and refuses writes whose selected slot has
 the high bit set.
 
+## Profile switching and count
+
+Command 02 sets the active profile; command 82 reads it back. Six profiles exist
+(indices 0..5). The owner confirmed 0..5 all switch successfully. Sending 02 {6}
+left the active profile unchanged (silently rejected). Read-only queries beyond the
+range return defaults (profiles 6/7 slot 02) then garbage (profiles 8/9 0x55/0xaa),
+so query responses alone are not a reliable range probe.
+
+Profile 0's configuration block is not a stable global template: its offset 2 read
+0x3f while profile 1 was active and 0x00 after switching to profile 0, and the block
+front zeroed. Offset 2 is therefore not a reliable enabled-profiles bitmask, and the
+profile subcommand does not use it as a precondition (it switches via 02 and verifies
+via 82).
+
 ## What remains unmeasured
 
 - Physical X/Y counts per inch and their before/after ratios.

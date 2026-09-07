@@ -4,7 +4,7 @@
 #define read mock_read
 #define poll mock_poll
 #define main utility_main
-#include "a22a-dpi.c"
+#include "main.c"
 #undef main
 #undef poll
 #undef read
