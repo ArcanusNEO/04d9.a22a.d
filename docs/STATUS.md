@@ -15,7 +15,7 @@ which device fields are understood. Protocol details, offsets and evidence are i
 | Set resolution count | `slot -c N SLOT` | 0c + 04 | Yes |
 | Set report rate | `rate HZ` | 03/83 | Yes (125/250/500/1000) |
 | Switch active profile | `profile N` | 02/82 | Yes (0..5) |
-| Copy profile | `copy SRC DST` | 0c/0d/8c/8d | Implemented (not yet hardware-verified) |
+| Copy profile | `profile -d SRC DST` | 0c/0d/8c/8d | Implemented (not yet hardware-verified) |
 | Flip wheel direction | `wheel` | 0d (+ 0c restore) | Yes (normal/natural) |
 | Full snapshot | `snapshot FILE` | 8c/8d (read all) | Yes |
 | Full restore | `restore FILE` | 0c/0d (write all) | Yes |

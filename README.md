@@ -118,12 +118,13 @@ sudo ./build/main profile 0
 
 The current profile is also shown by `show`.
 
-A profile's config and button blocks can be copied to another profile (indices
-0..5; source and destination must differ). The global profile-0 block is snapshotted
-and restored around the write, like other write commands:
+A profile's config and button blocks can be duplicated into another profile
+(indices 0..5; source and destination must differ). The global profile-0 block is
+snapshotted and restored around the write, like other write commands:
 
 ```sh
-sudo ./build/main copy 1 2
+sudo ./build/main profile -d 1 2
+sudo ./build/main profile --duplicate 1 2
 ```
 
 The wheel scroll direction can be flipped with a single toggle (button block command

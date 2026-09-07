@@ -588,7 +588,7 @@ print_usage (FILE *out, const char *prog)
            "  %s slot [-c|--count N] SLOT\n"
            "  %s rate HZ\n"
            "  %s profile N\n"
-           "  %s copy SRC DST\n"
+           "  %s profile [-d|--duplicate SRC] DST\n"
            "  %s wheel\n"
            "  %s snapshot FILE\n"
            "  %s restore FILE\n"
@@ -667,9 +667,11 @@ main (int argc, char **argv)
       = argc == 5 && !strcmp (argv[1], "slot")
         && (!strcmp (argv[2], "-c") || !strcmp (argv[2], "--count"));
   bool profile_cmd = argc == 3 && !strcmp (argv[1], "profile");
-  bool copy_cmd = argc == 4 && !strcmp (argv[1], "copy");
+  bool profile_dup
+      = argc == 5 && !strcmp (argv[1], "profile")
+        && (!strcmp (argv[2], "-d") || !strcmp (argv[2], "--duplicate"));
   if (!show && !plan && !set_dpi && !snapshot && !restore && !flip_wheel
-      && !set_rate && !slot_cmd && !slot_count && !profile_cmd && !copy_cmd)
+      && !set_rate && !slot_cmd && !slot_count && !profile_cmd && !profile_dup)
     {
       print_usage (stderr, argv[0]);
       return 2;
@@ -718,17 +720,17 @@ main (int argc, char **argv)
       target_profile = (unsigned)value;
     }
   unsigned copy_src = 0, copy_dst = 0;
-  if (copy_cmd)
+  if (profile_dup)
     {
       char *end;
       errno = 0;
-      unsigned long s = strtoul (argv[2], &end, 10);
-      if (errno || end == argv[2] || *end || s >= PROFILES)
+      unsigned long s = strtoul (argv[3], &end, 10);
+      if (errno || end == argv[3] || *end || s >= PROFILES)
         fail ("Source profile must be 0..5; device not opened.");
       copy_src = (unsigned)s;
       errno = 0;
-      unsigned long d = strtoul (argv[3], &end, 10);
-      if (errno || end == argv[3] || *end || d >= PROFILES)
+      unsigned long d = strtoul (argv[4], &end, 10);
+      if (errno || end == argv[4] || *end || d >= PROFILES)
         fail ("Destination profile must be 0..5; device not opened.");
       copy_dst = (unsigned)d;
       if (copy_src == copy_dst)
@@ -774,7 +776,7 @@ main (int argc, char **argv)
       close (fd);
       return 0;
     }
-  if (copy_cmd)
+  if (profile_dup)
     {
       uint8_t src_cfg[BLOCK], src_btn[BLOCK], global0[BLOCK];
       if (snapshot_global (fd, global0))
