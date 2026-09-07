@@ -94,12 +94,70 @@ reset_mock (void)
       = false;
 }
 
+static void
+test_pure_logic (void)
+{
+  uint8_t data[BLOCK];
+  memset (data, 0, BLOCK);
+
+  /* rate mapping */
+  if (rate_to_raw (1000) != 0x01 || rate_to_raw (500) != 0x02
+      || rate_to_raw (250) != 0x04 || rate_to_raw (125) != 0x08
+      || rate_to_raw (999) != 0 || rate_to_raw (0) != 0)
+    fail ("FAIL: rate_to_raw");
+  if (raw_to_rate_hz (0x01) != 1000 || raw_to_rate_hz (0x02) != 500
+      || raw_to_rate_hz (0x04) != 250 || raw_to_rate_hz (0x08) != 125
+      || raw_to_rate_hz (0x03) != 0 || raw_to_rate_hz (0x00) != 0)
+    fail ("FAIL: raw_to_rate_hz");
+
+  /* scroll direction */
+  for (unsigned i = 0; i < BLOCK; i++)
+    data[i] = 0;
+  data[SCROLL_REC14] = SCROLL_TYPE;
+  data[SCROLL_REC14 + 2] = SCROLL_UP;
+  data[SCROLL_REC15] = SCROLL_TYPE;
+  data[SCROLL_REC15 + 2] = SCROLL_DOWN;
+  if (!scroll_is_valid (data) || scroll_is_natural (data))
+    fail ("FAIL: scroll normal state");
+  scroll_set_direction (data, true);
+  if (!scroll_is_valid (data) || !scroll_is_natural (data))
+    fail ("FAIL: scroll natural state");
+  if (data[SCROLL_REC14 + 2] != SCROLL_DOWN
+      || data[SCROLL_REC15 + 2] != SCROLL_UP)
+    fail ("FAIL: scroll natural bytes");
+  scroll_set_direction (data, false);
+  if (scroll_is_natural (data))
+    fail ("FAIL: scroll back to normal");
+
+  /* raw_dpi 6-bit wrap */
+  data[84] = 16;
+  if (raw_dpi (data, 1, false) != 16)
+    fail ("FAIL: raw_dpi slot1");
+  data[84] = 64;
+  if (raw_dpi (data, 1, false) != 0)
+    fail ("FAIL: raw_dpi wrap 64");
+  data[84] = 80;
+  if (raw_dpi (data, 1, false) != 16)
+    fail ("FAIL: raw_dpi wrap 80");
+  data[84] = 255;
+  if (raw_dpi (data, 1, false) != 63)
+    fail ("FAIL: raw_dpi wrap 255");
+
+  /* edit_dpi */
+  edit_dpi (data, 1, 3200);
+  if (data[84] != 32)
+    fail ("FAIL: edit_dpi");
+
+  puts ("PASS: pure logic (rate map, scroll direction, 6-bit DPI wrap).");
+}
+
 int
 main (void)
 {
   uint8_t input[BLOCK], output[BLOCK];
   if (self_test ())
     return 1;
+  test_pure_logic ();
   for (unsigned i = 0; i < BLOCK; i++)
     input[i] = (uint8_t)(i * 13);
   reset_mock ();

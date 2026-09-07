@@ -86,8 +86,9 @@ those paths already contain something important. Never run builds as root.
 | read_block / read_profile / read_buttons | Validate acknowledgement, read two exact input chunks |
 | ready / write_block / write_profile / write_buttons | Synchronize 128/64/0 remaining counts around two output chunks |
 | raw_dpi / edit_dpi | Low-byte DPI interpretation and one-byte X edit |
-| scroll_set_direction / scroll_is_inverted | Wheel direction decode and flip |
+| scroll_set_direction / scroll_is_natural | Wheel direction decode and flip |
 | get_active_profile / set_active_profile | Profile query (82) and switch (02) with readback |
+| snapshot_global / restore_global_if_changed | Firmware-bug guard around writes |
 | pack_snapshot / valid_snapshot / unpack_snapshot / read_snapshot / save_snapshot / load_snapshot | Full-device snapshot, checksum, save/restore |
 | commit_profile | Guarded profile write: preflight, write, readback, activate |
 | print_usage / print_state | Usage text and post-change state reporting |
@@ -106,6 +107,10 @@ values, preservation of all unrelated bytes, snapshot roundtrip and detection of
 single-bit corruption in each snapshot byte. The broad offline encoding sweep is
 not permission to write all those values to hardware; the `dpi` subcommand retains
 its 100..6300 guardrail.
+
+Pure-logic tests additionally cover the rate code map, wheel direction
+normal/natural byte encoding, and the 6-bit DPI wrap boundary (64->0, 80->16,
+255->63).
 
 Mocked transport tests cover exact two-chunk success, remaining-count synchronization,
 invalid read/write acknowledgements, partial output/input, input timeout and stale

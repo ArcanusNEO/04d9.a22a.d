@@ -588,6 +588,7 @@ print_usage (FILE *out, const char *prog)
            "  %s slot [-c|--count N] SLOT\n"
            "  %s rate HZ\n"
            "  %s profile N\n"
+           "  %s copy SRC DST\n"
            "  %s wheel\n"
            "  %s snapshot FILE\n"
            "  %s restore FILE\n"
@@ -596,7 +597,8 @@ print_usage (FILE *out, const char *prog)
            "Rate options: 125, 250, 500, 1000. Profiles: 0..5.\n"
            "Writes are immediate and may persist. Close vendor software; do "
            "not unplug.\n",
-           prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
+           prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
+           prog);
 }
 
 /* Print the current device state. verbose adds the per-slot table. */
@@ -665,8 +667,9 @@ main (int argc, char **argv)
       = argc == 5 && !strcmp (argv[1], "slot")
         && (!strcmp (argv[2], "-c") || !strcmp (argv[2], "--count"));
   bool profile_cmd = argc == 3 && !strcmp (argv[1], "profile");
+  bool copy_cmd = argc == 4 && !strcmp (argv[1], "copy");
   if (!show && !plan && !set_dpi && !snapshot && !restore && !flip_wheel
-      && !set_rate && !slot_cmd && !slot_count && !profile_cmd)
+      && !set_rate && !slot_cmd && !slot_count && !profile_cmd && !copy_cmd)
     {
       print_usage (stderr, argv[0]);
       return 2;
@@ -714,6 +717,24 @@ main (int argc, char **argv)
         fail ("Profile must be 0..5; device not opened.");
       target_profile = (unsigned)value;
     }
+  unsigned copy_src = 0, copy_dst = 0;
+  if (copy_cmd)
+    {
+      char *end;
+      errno = 0;
+      unsigned long s = strtoul (argv[2], &end, 10);
+      if (errno || end == argv[2] || *end || s >= PROFILES)
+        fail ("Source profile must be 0..5; device not opened.");
+      copy_src = (unsigned)s;
+      errno = 0;
+      unsigned long d = strtoul (argv[3], &end, 10);
+      if (errno || end == argv[3] || *end || d >= PROFILES)
+        fail ("Destination profile must be 0..5; device not opened.");
+      copy_dst = (unsigned)d;
+      if (copy_src == copy_dst)
+        fail (
+            "Source and destination profiles must differ; device not opened.");
+    }
   unsigned target_hz = 0;
   if (set_rate)
     {
@@ -749,6 +770,30 @@ main (int argc, char **argv)
           "Active profile changed to %u.\n"
           "Applied via command 02; no configuration block was rewritten.\n",
           target_profile);
+      print_state (fd, true);
+      close (fd);
+      return 0;
+    }
+  if (copy_cmd)
+    {
+      uint8_t src_cfg[BLOCK], src_btn[BLOCK], global0[BLOCK];
+      if (snapshot_global (fd, global0))
+        fail ("Cannot snapshot global config; no write attempted.");
+      if (read_profile (fd, (uint8_t)copy_src, src_cfg)
+          || read_buttons (fd, (uint8_t)copy_src, src_btn))
+        fail ("Cannot read source profile; no write attempted.");
+      /* Copy config and button blocks to the destination profile. */
+      uint8_t dst_cur[BLOCK];
+      if (read_profile (fd, (uint8_t)copy_dst, dst_cur) == 0
+          && memcmp (dst_cur, src_cfg, BLOCK) != 0)
+        write_profile (fd, (uint8_t)copy_dst, src_cfg);
+      if (read_buttons (fd, (uint8_t)copy_dst, dst_cur) == 0
+          && memcmp (dst_cur, src_btn, BLOCK) != 0)
+        write_buttons (fd, (uint8_t)copy_dst, src_btn);
+      if (restore_global_if_changed (fd, global0, "profile copy"))
+        fail ("GLOBAL RESTORE FAILED; profile 0 may remain corrupted.");
+      printf ("Copied profile %u config+buttons to profile %u.\n", copy_src,
+              copy_dst);
       print_state (fd, true);
       close (fd);
       return 0;
