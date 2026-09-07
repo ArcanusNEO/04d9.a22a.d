@@ -64,7 +64,9 @@ connected. Root is needed on the inspected machine because hidraw is mode 0600.
 The program finds the device dynamically; do not hardcode `/dev/hidraw6`.
 
 ```sh
-sudo ./build/main show
+sudo ./build/main show          # 打印当前状态
+sudo ./build/main               # 无参数等价于 show
+sudo ./build/main help          # 或 -h/--help/usage/--usage
 sudo ./build/main plan 3200
 ```
 

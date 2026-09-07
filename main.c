@@ -542,12 +542,81 @@ self_test (void)
   return 0;
 }
 
+static void
+print_usage (FILE *out, const char *prog)
+{
+  fprintf (out,
+           "Usage:\n  %s [show]\n  %s --self-test\n  %s plan DPI\n"
+           "  %s dpi DPI\n"
+           "  %s slot [-c|--count N] SLOT\n"
+           "  %s rate HZ\n"
+           "  %s profile N\n"
+           "  %s wheel\n"
+           "  %s snapshot FILE\n"
+           "  %s restore FILE\n"
+           "  %s help|-h|--help\n"
+           "Experimental shared-X DPI, step 100, sensor 6-bit (100..6300).\n"
+           "Rate options: 125, 250, 500, 1000. Profiles: 0..5.\n"
+           "Writes are immediate and may persist. Close vendor software; do "
+           "not unplug.\n",
+           prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
+}
+
+/* Print the current device state. verbose adds the per-slot table. */
+static void
+print_state (int fd, bool verbose)
+{
+  uint8_t profile, slot;
+  uint8_t data[BLOCK], buttons[BLOCK], rate_raw;
+  if (current (fd, &profile, &slot) || read_profile (fd, profile, data))
+    fail ("Cannot read current state.");
+  printf (
+      "Device 04d9:a22a revision 0101; profile=%u, slot=%u (wire indices)\n",
+      profile, slot);
+  printf ("Current X raw=%u, estimated shared DPI=%u; Y raw=%u (preserved).\n",
+          raw_dpi (data, slot, false), raw_dpi (data, slot, false) * 100,
+          raw_dpi (data, slot, true));
+  printf ("Candidate count=%u, enabled mask=0x%02x, scale X/Y=%u/%u\n",
+          data[70], data[100], data[74], data[75]);
+  if (get_rate (fd, profile, &rate_raw) == 0)
+    printf ("Report rate raw=0x%02x (~%u Hz); enabled-rates field=0x%02x\n",
+            rate_raw, raw_to_rate_hz (rate_raw), data[64]);
+  else
+    printf ("Report rate query failed; enabled-rates field=0x%02x\n",
+            data[64]);
+  if (read_buttons (fd, profile, buttons) == 0 && scroll_is_valid (buttons))
+    printf ("Wheel direction: %s\n",
+            scroll_is_inverted (buttons) ? "inverted" : "normal");
+  else
+    printf ("Wheel direction: unknown (scroll records unrecognized)\n");
+  printf ("Sensor inferred PAW33xx 6-bit; raw>=64 wraps mod 64 (0..63 => "
+          "0..6300 CPI).\n"
+          "Unverified high masks X/Y=0x%02x/0x%02x; displayed DPI uses low 6 "
+          "bits.\n",
+          data[82], data[83]);
+  if (verbose)
+    for (unsigned s = 1; s <= 8; s++)
+      printf ("slot %u: X=%u (~%u DPI), Y=%u, enabled-by-count-and-mask=%s\n",
+              s, raw_dpi (data, s, false), raw_dpi (data, s, false) * 100,
+              raw_dpi (data, s, true),
+              s <= data[70] && (data[100] & (1u << (s - 1))) ? "yes" : "no");
+}
+
 int
 main (int argc, char **argv)
 {
   if (argc == 2 && !strcmp (argv[1], "--self-test"))
     return self_test ();
-  bool show = argc == 2 && !strcmp (argv[1], "show");
+  bool help = argc == 2
+              && (!strcmp (argv[1], "help") || !strcmp (argv[1], "usage")
+                  || !strcmp (argv[1], "-h") || !strcmp (argv[1], "--help")
+                  || !strcmp (argv[1], "--usage"));
+  if (help)
+    {
+      print_usage (stdout, argv[0]);
+      return 0;
+    }
+  bool show = argc == 1 || (argc == 2 && !strcmp (argv[1], "show"));
   bool plan = argc == 3 && !strcmp (argv[1], "plan");
   bool set_dpi = argc == 3 && !strcmp (argv[1], "dpi");
   bool snapshot = argc == 3 && !strcmp (argv[1], "snapshot");
@@ -562,22 +631,7 @@ main (int argc, char **argv)
   if (!show && !plan && !set_dpi && !snapshot && !restore && !flip_wheel
       && !set_rate && !slot_cmd && !slot_count && !profile_cmd)
     {
-      fprintf (
-          stderr,
-          "Usage:\n  %s show\n  %s --self-test\n  %s plan DPI\n"
-          "  %s dpi DPI\n"
-          "  %s slot [-c|--count N] SLOT\n"
-          "  %s rate HZ\n"
-          "  %s profile N\n"
-          "  %s wheel\n"
-          "  %s snapshot FILE\n"
-          "  %s restore FILE\n"
-          "Experimental shared-X DPI, step 100, sensor 6-bit (100..6300).\n"
-          "Rate options: 125, 250, 500, 1000. Profiles: 0..5.\n"
-          "Writes are immediate and may persist. Close vendor software; do "
-          "not unplug.\n",
-          argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0],
-          argv[0], argv[0], argv[0]);
+      print_usage (stderr, argv[0]);
       return 2;
     }
   unsigned dpi = 0;
@@ -637,42 +691,9 @@ main (int argc, char **argv)
   uint8_t profile, slot, original[BLOCK], target[BLOCK];
   if (current (fd, &profile, &slot) || read_profile (fd, profile, original))
     fail ("Cannot read current state; no configuration write attempted.");
-  printf (
-      "Device 04d9:a22a revision 0101; profile=%u, slot=%u (wire indices)\n",
-      profile, slot);
-  printf ("Current X raw=%u, estimated shared DPI=%u; Y raw=%u (preserved).\n",
-          raw_dpi (original, slot, false),
-          raw_dpi (original, slot, false) * 100,
-          raw_dpi (original, slot, true));
-  printf ("Candidate count=%u, enabled mask=0x%02x, scale X/Y=%u/%u\n",
-          original[70], original[100], original[74], original[75]);
-  uint8_t rate_raw;
-  if (get_rate (fd, profile, &rate_raw) == 0)
-    printf ("Report rate raw=0x%02x (~%u Hz); enabled-rates field=0x%02x\n",
-            rate_raw, raw_to_rate_hz (rate_raw), original[64]);
-  else
-    printf ("Report rate query failed; enabled-rates field=0x%02x\n",
-            original[64]);
-  uint8_t buttons[BLOCK];
-  if (read_buttons (fd, profile, buttons) == 0 && scroll_is_valid (buttons))
-    printf ("Wheel direction: %s\n",
-            scroll_is_inverted (buttons) ? "inverted" : "normal");
-  else
-    printf ("Wheel direction: unknown (scroll records unrecognized)\n");
-  printf ("Sensor inferred PAW33xx 6-bit; raw>=64 wraps mod 64 (0..63 => "
-          "0..6300 CPI).\n"
-          "Unverified high masks X/Y=0x%02x/0x%02x; displayed DPI uses low 6 "
-          "bits.\n",
-          original[82], original[83]);
   if (show)
     {
-      for (unsigned s = 1; s <= 8; s++)
-        printf (
-            "slot %u: X=%u (~%u DPI), Y=%u, enabled-by-count-and-mask=%s\n", s,
-            raw_dpi (original, s, false), raw_dpi (original, s, false) * 100,
-            raw_dpi (original, s, true),
-            s <= original[70] && (original[100] & (1u << (s - 1))) ? "yes"
-                                                                   : "no");
+      print_state (fd, true);
       close (fd);
       return 0;
     }
@@ -691,6 +712,7 @@ main (int argc, char **argv)
           "Active profile changed to %u.\n"
           "Applied via command 02; no configuration block was rewritten.\n",
           target_profile);
+      print_state (fd, true);
       close (fd);
       return 0;
     }
@@ -719,6 +741,7 @@ main (int argc, char **argv)
         {
           printf ("Slot %u already active; no selection write performed.\n",
                   slot);
+          print_state (fd, true);
           close (fd);
           return 0;
         }
@@ -733,6 +756,7 @@ main (int argc, char **argv)
               target_slot, raw_dpi (original, target_slot, false),
               raw_dpi (original, target_slot, false) * 100,
               raw_dpi (original, target_slot, true));
+      print_state (fd, true);
       close (fd);
       return 0;
     }
@@ -755,6 +779,7 @@ main (int argc, char **argv)
           "Report rate set to %u Hz (raw 0x%02x), profile %u.\n"
           "Applied via command 03; no configuration block was rewritten.\n",
           target_hz, raw, profile);
+      print_state (fd, true);
       close (fd);
       return 0;
     }
@@ -814,6 +839,7 @@ main (int argc, char **argv)
               "up/down events).\n",
               inverted ? "normal" : "inverted",
               inverted ? "inverted" : "normal");
+      print_state (fd, true);
       close (fd);
       return 0;
     }
@@ -874,6 +900,7 @@ main (int argc, char **argv)
   if (!memcmp (original, target, BLOCK))
     {
       puts ("Already set; no configuration write, or activation needed.");
+      print_state (fd, true);
       close (fd);
       return 0;
     }
@@ -882,6 +909,7 @@ main (int argc, char **argv)
           "Physical sensitivity and persistence across power cycles are not "
           "measured.\n",
           raw_dpi (target, slot, false) * 100);
+  print_state (fd, true);
   close (fd);
   return 0;
 }

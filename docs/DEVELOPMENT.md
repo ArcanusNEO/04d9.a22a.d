@@ -90,6 +90,7 @@ those paths already contain something important. Never run builds as root.
 | get_active_profile / set_active_profile | Profile query (82) and switch (02) with readback |
 | pack_snapshot / valid_snapshot / unpack_snapshot / read_snapshot / save_snapshot / load_snapshot | Full-device snapshot, checksum, save/restore |
 | commit_profile | Guarded profile write: preflight, write, readback, activate |
+| print_usage / print_state | Usage text and post-change state reporting |
 | main | CLI dispatch, layout guards, dry run, no-op, preflight, wheel bug mitigation |
 | self_test | Pure packet, encoding/preservation and snapshot tests |
 | main-test.c | Includes implementation under mocked syscall names; never opens a device |
