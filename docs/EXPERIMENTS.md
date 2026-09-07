@@ -1,0 +1,151 @@
+# Investigation and validation record
+
+Date: 2026-09-07. Evidence below is transcribed from the live investigation's tool
+output and owner confirmations, not a USBPcap/usbmon capture. No vendor driver,
+retail model information, PCB photograph, MCU marking or firmware image was available.
+
+## Sequence and confidence
+
+| Stage | Action | Result |
+| --- | --- | --- |
+| Enumeration | lsusb and cached sysfs HID descriptors | A22A revision 0101, three interfaces, API-B-like transport |
+| Initial Feature read | GET_FEATURE only | Eight zero payload bytes |
+| Echo | API B 00 with RATB marker | Exact marker echo |
+| State | 82, 83, 84 | Profile 1, rate code 01, slot 1 |
+| Blocks | 8c profile 1, 8d profile 1 | 128 bytes each, two 64-byte inputs |
+| Global candidate | 8c profile 0 | 128 bytes; candidate enabled-profile mask 3f |
+| Stability | Two additional profile-1 reads | Identical SHA-256; active profile remained 1 |
+| Initial DPI | Owner-supplied fact | 1200; profile X low=12, Y low=20 |
+| First write | Owner authorized 3200, retain result | Full readback before/after activation passed; owner confirmed success |
+| Second write | Owner authorized 1600 | Full readback before/after activation passed; owner reported no problem |
+| Handoff | Save source, tests and documentation | No further configuration change; last intended setting remains 1600 |
+
+User confirmation is practical functional validation. It is not a calibrated raw
+X/Y count measurement, proof of a particular sensor model, or power-cycle testing.
+Only profile 1 / slot 1 was written. No restore command has been exercised on hardware.
+
+## Early feature transactions
+
+Buffers include the zero hidraw placeholder:
+
+```text
+Echo TX: 00 00 52 41 54 42 00 00 d6
+Echo RX: 00 00 52 41 54 42 00 00 00
+
+Profile TX: 00 82 00 00 00 00 00 00 7d
+Profile RX: 00 82 01 00 00 00 00 00 00
+
+Rate TX: 00 83 01 00 00 00 00 00 7b
+Rate RX: 00 83 01 01 00 00 00 00 00
+
+Slot TX: 00 84 01 00 00 00 00 00 7a
+Slot RX: 00 84 01 01 00 00 00 00 00
+
+Profile block TX: 00 8c 01 00 00 00 00 00 72
+Profile block RX: 00 8c 01 80 00 00 00 00 00
+
+Button block TX: 00 8d 01 00 00 00 00 00 71
+Button block RX: 00 8d 01 80 00 00 00 00 00
+```
+
+Each block acknowledgement was followed by exactly two 64-byte inputs.
+
+## Baseline profile 1, 1200 DPI
+
+Each row contains 16 bytes; left column is the decimal offset. This is historical
+configuration evidence, **not** a firmware image or an instruction to replay data.
+
+```text
+000: ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+016: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+032: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+048: 2e 10 42 00 00 00 00 00 00 00 00 00 00 00 00 00
+064: 8f 04 0a 0a 19 19 01 01 ff 00 64 64 01 c0 f0 03
+080: 64 00 20 20 0c 08 10 18 30 3e 50 e0 14 28 3c 50
+096: a0 40 61 77 ff ff ff 14 ff 00 00 00 ff 00 00 00
+112: ff ff 00 ff ff ff 00 00 ff ff ff 80 00 ff ff ff
+```
+
+Original 128-byte SHA-256, identical in two repeat reads:
+
+```text
+1684df1955bd903ff6da5df1695c30935c8fe7b1d8c3d1b045b4e292dffdb411
+```
+
+Original X low values: 12, 8, 16, 24, 48, 62, 80, 224.
+Original Y low values: 20, 40, 60, 80, 160, 64, 97, 119.
+Candidate high masks: 20/20 hex. The selected slot's bits were clear; bit 5 is set
+for inactive slot 6, which the CLI neither interprets as a confirmed ninth bit nor edits.
+Only slot 1 was enabled by the reference count-and-mask interpretation.
+
+## Baseline profile 0
+
+```text
+000: 88 00 3f 00 42 03 fe 0f 00 00 00 00 00 00 00 00
+016: 00 01 02 03 04 05 06 07 ff 00 00 ff 00 00 ff 00
+032: 00 ff 00 00 ff 00 00 ff 00 00 ff 00 00 ff 00 00
+048: ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+064: 8f 04 0a 0a 19 19 06 05 ff 04 64 64 01 c0 f0 03
+080: 64 00 20 20 14 28 3c 50 a0 40 61 77 14 28 3c 50
+096: a0 40 61 77 ff ff ff ff ff 00 00 00 00 ff 00 ff
+112: 00 ff ff 00 00 ff ff ff 00 ff ff 55 00 ff ff ff
+```
+
+Observed SHA-256:
+
+```text
+c04eb9c5119efd41a972413628faf569eaf78b99e7b56b84bb8696a16954281d
+```
+
+## Baseline button block, profile 1
+
+```text
+000: 01 00 f0 00 01 00 f1 00 01 00 f2 00 01 00 f3 00
+016: 01 00 f4 00 07 00 03 00 0c 00 00 00 0b 00 02 02
+032: 0a f0 21 03 0c 00 00 00 0c 00 00 00 00 00 00 00
+048: 00 00 00 00 00 00 00 00 04 00 02 00 04 00 01 00
+064: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+080: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+096: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+112: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+```
+
+## Authorized DPI writes
+
+Both writes used the C driver now saved in the project. Protocol-derived host
+command buffers for this profile/slot are:
+
+```text
+Begin profile write: 00 0c 01 80 00 00 00 00 72
+Reselect slot:       00 04 01 01 00 00 00 00 f9
+```
+
+These write buffers are reconstructed from the saved implementation, not captured
+bus traffic. All readiness, length and full-block equality checks in that code passed.
+
+| Write | Offset 84 | Other 127 bytes | Backup of state before write |
+| --- | --- | --- | --- |
+| 1200 -> 3200 | 0c -> 20 | Unchanged | /tmp/a22a-dpi-backup-9tW8Fj |
+| 3200 -> 1600 | 20 -> 10 | Unchanged | /tmp/a22a-dpi-backup-OkJ7B4 |
+
+These are historical temporary paths, not guaranteed to survive cleanup/reboot.
+The original binary backups are not bundled into this source project. The baseline
+hex above is an evidence record and lacks the backup container required by restore.
+
+Both transactions kept profile index 1 / slot 1, preserved Y low=20, reselected
+the same slot and were independently read after process exit. The final intended
+profile equals the 1200 baseline above with **only offset 84 replaced by 10 hex**.
+
+## What remains unmeasured
+
+- Physical X/Y counts per inch and their before/after ratios.
+- Whether another firmware configuration can enable an independent Y table.
+- Whether writing a profile without 04 would apply the new DPI immediately.
+- Persistence after unplug/replug, restart, suspend or hardware DPI-button use.
+- Other slots/profiles, values outside the successful tests, sensor limits and high bits.
+- Recovery after partial transfers, physical disconnects or failed activation.
+
+No additional writes should be inferred as authorized by this record. Future
+experiments must state the intended changes, potential persistence, backup and
+desired final state. Do not automatically restore 1200: the owner requested that
+successful settings remain active, and accepted 1600 as the latest result.
