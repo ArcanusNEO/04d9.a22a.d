@@ -265,14 +265,14 @@ enum
 };
 
 static void
-scroll_set_direction (uint8_t data[BLOCK], bool inverted)
+scroll_set_direction (uint8_t data[BLOCK], bool natural)
 {
-  /* Normal: rec14=up, rec15=down. Inverted: rec14=down, rec15=up. */
-  data[SCROLL_REC14 + 2] = inverted ? SCROLL_DOWN : SCROLL_UP;
-  data[SCROLL_REC15 + 2] = inverted ? SCROLL_UP : SCROLL_DOWN;
+  /* Normal: rec14=up, rec15=down. Natural: rec14=down, rec15=up. */
+  data[SCROLL_REC14 + 2] = natural ? SCROLL_DOWN : SCROLL_UP;
+  data[SCROLL_REC15 + 2] = natural ? SCROLL_UP : SCROLL_DOWN;
 }
 
-/* Returns true if the two scroll records are type 0x04 and currently inverted.
+/* Returns true if the two scroll records are type 0x04 and in a known state.
  */
 static bool
 scroll_is_valid (const uint8_t data[BLOCK])
@@ -284,12 +284,12 @@ scroll_is_valid (const uint8_t data[BLOCK])
   bool up15 = data[SCROLL_REC15 + 2] == SCROLL_UP;
   bool dn15 = data[SCROLL_REC15 + 2] == SCROLL_DOWN;
   bool normal = rec14 && rec15 && up14 && dn15;
-  bool inverted = rec14 && rec15 && dn14 && up15;
-  return normal || inverted;
+  bool natural = rec14 && rec15 && dn14 && up15;
+  return normal || natural;
 }
 
 static bool
-scroll_is_inverted (const uint8_t data[BLOCK])
+scroll_is_natural (const uint8_t data[BLOCK])
 {
   return data[SCROLL_REC14] == SCROLL_TYPE
          && data[SCROLL_REC14 + 2] == SCROLL_DOWN
@@ -586,7 +586,7 @@ print_state (int fd, bool verbose)
             data[64]);
   if (read_buttons (fd, profile, buttons) == 0 && scroll_is_valid (buttons))
     printf ("Wheel direction: %s\n",
-            scroll_is_inverted (buttons) ? "inverted" : "normal");
+            scroll_is_natural (buttons) ? "natural" : "normal");
   else
     printf ("Wheel direction: unknown (scroll records unrecognized)\n");
   printf ("Sensor inferred PAW33xx 6-bit; raw>=64 wraps mod 64 (0..63 => "
@@ -802,9 +802,9 @@ main (int argc, char **argv)
         fail ("Cannot read button config; no write attempted.");
       if (!scroll_is_valid (buttons))
         fail ("Scroll records outside inspected layout; nothing written.");
-      bool inverted = !scroll_is_inverted (buttons);
+      bool natural = !scroll_is_natural (buttons);
       memcpy (changed, buttons, BLOCK);
-      scroll_set_direction (changed, inverted);
+      scroll_set_direction (changed, natural);
       for (int i = 0; i < BLOCK; i++)
         if (changed[i] != buttons[i] && i != SCROLL_REC14 + 2
             && i != SCROLL_REC15 + 2)
@@ -837,8 +837,7 @@ main (int argc, char **argv)
         }
       printf ("Wheel direction flipped: was %s, now %s (records 14/15: "
               "up/down events).\n",
-              inverted ? "normal" : "inverted",
-              inverted ? "inverted" : "normal");
+              natural ? "normal" : "natural", natural ? "natural" : "normal");
       print_state (fd, true);
       close (fd);
       return 0;

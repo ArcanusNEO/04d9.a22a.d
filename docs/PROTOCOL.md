@@ -275,7 +275,8 @@ written by this project.
 
 Scroll records 14 and 15 live at byte offsets 56 and 60 in the button block. Each
 record is `type(0x04) pad event pad`; event 0x01 = up, 0x02 = down. Normal layout
-is record 14 = up, record 15 = down. Swapping the two event bytes inverts scrolling.
+is record 14 = up, record 15 = down. Swapping the two event bytes inverts scrolling
+(the macOS/GNOME "natural scrolling" sense). `show` reports `normal` or `natural`.
 
 The `wheel` subcommand flips the current direction by swapping only those two event
 bytes. It preserves every other byte and verifies a full readback after writing via
@@ -290,7 +291,7 @@ hardcoded; the snapshot is read at runtime, so the mitigation applies to other m
 of this firmware family too. A warning is printed before the write.
 
 The vendor driver reportedly had a bug that left this state inverted and could not
-restore it. The recorded write flipped `inverted -> normal`; the direction field is
+restore it. The recorded write flipped `natural -> normal`; the direction field is
 now a supported, reversible setting.
 
 ## Snapshot format
