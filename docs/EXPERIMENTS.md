@@ -138,15 +138,15 @@ profile equals the 1200 baseline above with **only offset 84 replaced by 10 hex*
 
 ## Slot selection and count field
 
-A direct `04 {profile, slot}` selection was initially rejected while `count` (offset
-70) stayed at 1. The firmware accepted only slot 1 as active regardless of the
-`0xff` enable mask. `count 8` was then written with owner authorization; backup
-`/tmp/a22a-dpi-backup-cKJRD7` records the pre-change count=1 state. Afterward
-`switch` selected slots normally.
+A direct `04 {profile, slot}` selection was initially rejected while the resolution
+count (offset 70) stayed at 1. The firmware accepted only slot 1 as active regardless
+of the `0xff` enable mask. The count was then written to 8 with owner authorization;
+backup `/tmp/a22a-dpi-backup-cKJRD7` records the pre-change count=1 state. Afterward
+`slot SLOT` selected slots normally.
 
-The `switch` subcommand was later changed to no longer auto-modify `count`; it sends
-only the `04` selection and reports failure if the firmware rejects it. `count N`
-remains the explicit way to change offset 70.
+The `slot SLOT` subcommand does not auto-modify the count; it sends only the `04`
+selection and reports failure if the firmware rejects it. `slot [-c|--count N] SLOT`
+sets the count first (when it differs) and then selects the slot.
 
 Owner-observed speed comparison after enabling all slots:
 
@@ -173,7 +173,7 @@ Recorded as inference, not a read die marking:
 - PAW3333/PAW3335 register maps are NDA; `sensor_srom_id = 0x03` and register pairs
   `(0x2e,0x10)/(0x42,0x00)` are not decoded.
 
-The CLI now limits `set`/`plan` to 100..6300 and displays stored raw values through
+The CLI now limits `dpi`/`plan` to 100..6300 and displays stored raw values through
 the six-bit mask, so an inactive 224 is reported as 32 (3200 CPI), not 22400.
 
 ## Report rate
@@ -201,6 +201,37 @@ The backup of the inverted state is `/tmp/a22a-dpi-backup-yjc5e7`.
 
 The interface was then consolidated into a single `wheel` action that toggles the
 current direction, rather than requiring an explicit `normal`/`inverted` argument.
+
+## Combination-key chord (side + right = DPI switch)
+
+The owner reported that holding the upper side button plus the right button switches
+the DPI slot. Investigation established:
+
+- The button block is a flat 16-record table; no record encodes a two-key chord.
+  Reference type `0x0c` is a left-click synonym (`{0x0c,{0}} -> button(1)` in the
+  reference driver's quirks map), not a chord. Types `0x05` (rate) and `0x0b`
+  (special) have no defined decode in the reference driver.
+- Profile 0 (factory/global) differs from profile 1 (active): it retains rate-cycle
+  `05 00 03 00`, media `03 00 23 02` (AC Home, consumer 0x0223), and a normal
+  (non-inverted) wheel direction.
+- A read-only probe (`a22a-probe.c`, later removed) monitored mouse, keyboard and
+  vendor IN reports while polling active slot 0x84. During a captured chord press,
+  the mouse reported only the ordinary button bitmap `0x12` (right + side5) with no
+  extra HID report, no vendor report, and no change to the active slot.
+
+Conclusion: the chord is a firmware-level DPI step shortcut executed inside the MCU.
+It rewrites the sensor resolution register directly, bypassing the configuration
+table's active slot, and leaves no HID-observable state. It cannot be disabled or
+modified through the HID button block. The experimental `dpi-cycle off` subcommand
+that zeroed button record 5 was removed after confirming it did not affect the chord.
+
+## Slot high-bit masks
+
+Offset 82 (X) and 83 (Y) are per-slot ninth-bit masks. Observed value `0x20` for
+both: only slot 6 has its ninth bit set, giving X=318 and Y=320 (the sole slot using
+9-bit encoding). All other slots are 8-bit. This mask interpretation remains
+candidate; the CLI preserves the masks and refuses writes whose selected slot has
+the high bit set.
 
 ## What remains unmeasured
 

@@ -29,8 +29,8 @@ This remains an experimental single-device tool, not a universal Holtek driver.
 5. Avoid firmware updates, unexplained writes, system-wide installation and services.
 
 Implemented: device/revision/descriptor checks, current profile/slot reads, profile
-download, DPI inspection and dry-run diff, guarded set, backup and restricted restore,
-explicit resolution-count (`count`) and active-slot (`switch`) control, report rate
+download, DPI inspection and dry-run diff, guarded DPI write, backup and restricted
+restore, active-slot selection and resolution-count control (`slot`), report rate
 (`rate`) control, and wheel direction toggle (`wheel`).
 
 Not implemented: active-profile switching, independent XY control, RGB, remapping,
@@ -70,11 +70,10 @@ sudo ./build/a22a-dpi plan 3200
 Both commands send query requests via SET_FEATURE, but **do not write configuration**,
 activate a slot or create backups. `plan` prints the proposed changed offsets.
 
-The next command explicitly authorizes a potentially persistent board configuration
-write. Do not execute it merely to build or test the project:
+All other subcommands write immediately (no confirmation gate) and may persist:
 
 ```sh
-sudo ./build/a22a-dpi set 3200 --allow-persistent-write
+sudo ./build/a22a-dpi dpi 3200
 ```
 
 The CLI accepts multiples of 100 from 100 to 6300. The sensor is inferred to be a
@@ -85,22 +84,24 @@ PixArt PAW33xx part with a 6-bit resolution register: raw values 0..63 map to
 by the slot 6 (raw 62, fast) versus slot 7 (raw 80, slow) comparison.
 
 The active resolution slot can be switched, and the number of enabled slots can be
-changed. The firmware rejects selecting a slot above the configured count, so `count`
-may need raising first. Both commands are explicit authorized writes:
+changed. The firmware rejects selecting a slot above the configured count, so the
+count may need raising first:
 
 ```sh
-sudo ./build/a22a-dpi count 8 --allow-persistent-write
-sudo ./build/a22a-dpi switch 7 --allow-persistent-write
+sudo ./build/a22a-dpi slot 7
+sudo ./build/a22a-dpi slot --count 8 7
+sudo ./build/a22a-dpi slot -c 8 7
 ```
 
-`switch` does not auto-modify `count`; it only sends the slot-selection command and
-reports failure if the firmware rejects it.
+`slot SLOT` only selects the active slot; it does not auto-modify the count and
+reports failure if the firmware rejects it. `slot [-c|--count N] SLOT` first sets
+the resolution count to N (when it differs), then selects SLOT.
 
 The report rate can be changed with command 03, independent of the configuration
 block. Options are 125, 250, 500 and 1000 Hz:
 
 ```sh
-sudo ./build/a22a-dpi rate 500 --allow-persistent-write
+sudo ./build/a22a-dpi rate 500
 ```
 
 The current rate is also shown by `show`.
@@ -109,7 +110,7 @@ The wheel scroll direction can be flipped with a single toggle (button block com
 0d). This also recovers from the vendor driver's inverted-scroll bug:
 
 ```sh
-sudo ./build/a22a-dpi wheel --allow-persistent-write
+sudo ./build/a22a-dpi wheel
 ```
 
 The current wheel direction is also shown by `show`.
@@ -118,7 +119,7 @@ Each actual modification first creates a flushed 0600 backup in `/tmp`, and prin
 its unique path. Restore takes the actual printed filename, not this placeholder:
 
 ```sh
-sudo ./build/a22a-dpi restore /tmp/a22a-dpi-backup-XXXXXX --allow-persistent-write
+sudo ./build/a22a-dpi restore /tmp/a22a-dpi-backup-XXXXXX
 ```
 
 Restore is a restricted current-X undo, not disaster recovery. It rejects changes

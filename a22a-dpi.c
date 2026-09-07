@@ -410,30 +410,30 @@ int main(int argc, char **argv)
         return self_test();
     bool show = argc == 2 && !strcmp(argv[1], "show");
     bool plan = argc == 3 && !strcmp(argv[1], "plan");
-    bool set = argc == 4 && !strcmp(argv[1], "set");
-    bool restore = argc == 4 && !strcmp(argv[1], "restore");
-    bool switch_slot = argc == 4 && !strcmp(argv[1], "switch");
-    bool set_count = argc == 4 && !strcmp(argv[1], "count");
-    bool set_rate = argc == 4 && !strcmp(argv[1], "rate");
-    bool flip_wheel = argc == 3 && !strcmp(argv[1], "wheel");
-    if (!show && !plan && !(set || restore || switch_slot || set_count || set_rate || flip_wheel) &&
-        (!(set || restore || switch_slot || set_count || set_rate) || strcmp(argv[3], "--allow-persistent-write")) &&
-        (!flip_wheel || strcmp(argv[2], "--allow-persistent-write"))) {
+    bool set_dpi = argc == 3 && !strcmp(argv[1], "dpi");
+    bool restore = argc == 3 && !strcmp(argv[1], "restore");
+    bool flip_wheel = argc == 2 && !strcmp(argv[1], "wheel");
+    bool set_rate = argc == 3 && !strcmp(argv[1], "rate");
+    bool slot_cmd = argc == 3 && !strcmp(argv[1], "slot");
+    bool slot_count = argc == 5 && !strcmp(argv[1], "slot") &&
+                      (!strcmp(argv[2], "-c") || !strcmp(argv[2], "--count"));
+    if (!show && !plan && !set_dpi && !restore && !flip_wheel &&
+        !set_rate && !slot_cmd && !slot_count) {
         fprintf(stderr, "Usage:\n  %s show\n  %s --self-test\n  %s plan DPI\n"
-                "  %s set DPI --allow-persistent-write\n"
-                "  %s switch SLOT --allow-persistent-write\n"
-                "  %s count N --allow-persistent-write\n"
-                "  %s rate HZ --allow-persistent-write\n"
-                "  %s wheel --allow-persistent-write\n"
-                "  %s restore BACKUP --allow-persistent-write\n"
+                "  %s dpi DPI\n"
+                "  %s slot SLOT\n"
+                "  %s slot [-c|--count N] SLOT\n"
+                "  %s rate HZ\n"
+                "  %s wheel\n"
+                "  %s restore BACKUP\n"
                 "Experimental shared-X DPI, step 100, sensor 6-bit (100..6300).\n"
                 "Rate options: 125, 250, 500, 1000.\n"
-                "Writes may persist. Close vendor software; do not unplug during writes.\n",
+                "Writes are immediate and may persist. Close vendor software; do not unplug.\n",
                 argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
         return 2;
     }
     unsigned dpi = 0;
-    if (set || plan) {
+    if (set_dpi || plan) {
         char *end;
         errno = 0;
         unsigned long value = strtoul(argv[2], &end, 10);
@@ -442,20 +442,21 @@ int main(int argc, char **argv)
         dpi = (unsigned)value;
     }
     unsigned target_slot = 0;
-    if (switch_slot) {
+    if (slot_cmd || slot_count) {
+        const char *slot_arg = slot_count ? argv[4] : argv[2];
         char *end;
         errno = 0;
-        unsigned long value = strtoul(argv[2], &end, 10);
-        if (errno || end == argv[2] || *end || value < 1 || value > 8)
+        unsigned long value = strtoul(slot_arg, &end, 10);
+        if (errno || end == slot_arg || *end || value < 1 || value > 8)
             fail("Slot must be 1..8; device not opened.");
         target_slot = (unsigned)value;
     }
     unsigned target_count = 0;
-    if (set_count) {
+    if (slot_count) {
         char *end;
         errno = 0;
-        unsigned long value = strtoul(argv[2], &end, 10);
-        if (errno || end == argv[2] || *end || value < 1 || value > 8)
+        unsigned long value = strtoul(argv[3], &end, 10);
+        if (errno || end == argv[3] || *end || value < 1 || value > 8)
             fail("Count must be 1..8; device not opened.");
         target_count = (unsigned)value;
     }
@@ -501,9 +502,22 @@ int main(int argc, char **argv)
         close(fd);
         return 0;
     }
-    if (switch_slot) {
+    if (slot_count) {
+        if (original[74] != 100 || original[75] != 100)
+            fail("State outside inspected DPI layout; nothing written.");
+        memcpy(target, original, BLOCK);
+        target[70] = (uint8_t)target_count;
+        if (memcmp(original, target, BLOCK) != 0) {
+            commit_profile(fd, profile, slot, original, target);
+            printf("Resolution count set to %u (offset 70).\n"
+                   "Active slot %u was reselected after the write.\n", target_count, slot);
+        } else {
+            printf("Count already %u; no count write performed.\n", target_count);
+        }
+    }
+    if (slot_cmd || slot_count) {
         if (target_slot == slot) {
-            printf("Slot %u already active; no configuration write performed.\n", slot);
+            printf("Slot %u already active; no selection write performed.\n", slot);
             close(fd);
             return 0;
         }
@@ -512,27 +526,10 @@ int main(int argc, char **argv)
             current(fd, &check_profile, &check_slot) ||
             check_profile != profile || check_slot != target_slot)
             fail("Slot selection unverified; firmware may have rejected it (e.g. count too low).");
-        printf("Active slot changed to %u (wire index). X low=%u (~%u DPI), Y low=%u.\n"
-               "No configuration bytes were rewritten; only the active slot was selected.\n",
+        printf("Active slot changed to %u (wire index). X low=%u (~%u DPI), Y low=%u.\n",
                target_slot, raw_dpi(original, target_slot, false),
                raw_dpi(original, target_slot, false) * 100,
                raw_dpi(original, target_slot, true));
-        close(fd);
-        return 0;
-    }
-    if (set_count) {
-        if (original[74] != 100 || original[75] != 100)
-            fail("State outside inspected DPI layout; nothing written.");
-        memcpy(target, original, BLOCK);
-        target[70] = (uint8_t)target_count;
-        if (memcmp(original, target, BLOCK) == 0) {
-            printf("Count already %u; no configuration write performed.\n", target_count);
-            close(fd);
-            return 0;
-        }
-        commit_profile(fd, profile, slot, original, target);
-        printf("Resolution count set to %u (offset 70).\n"
-               "Active slot %u was reselected after the write.\n", target_count, slot);
         close(fd);
         return 0;
     }
@@ -587,7 +584,7 @@ int main(int argc, char **argv)
         original[74] != 100 || original[75] != 100)
         fail("State outside inspected DPI layout; nothing written.");
     memcpy(target, original, BLOCK);
-    if (set || plan)
+    if (set_dpi || plan)
         edit_dpi(target, slot, dpi);
     else {
         load_backup(argv[2], profile, slot, target);

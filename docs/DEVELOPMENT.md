@@ -64,11 +64,13 @@ those paths already contain something important. Never run builds as root.
 | open_mouse | Match VID/PID, exact HID descriptor, revision; require one device; advisory lock |
 | packet / send_command / get_feature / query | Eight-byte protocol in nine-byte hidraw buffers |
 | current | Read wire profile and one-based active resolution slot |
-| read_profile | Validate acknowledgement, read two exact input chunks |
-| ready / write_profile | Synchronize 128/64/0 remaining counts around two output chunks |
+| read_block / read_profile / read_buttons | Validate acknowledgement, read two exact input chunks |
+| ready / write_block / write_profile / write_buttons | Synchronize 128/64/0 remaining counts around two output chunks |
 | raw_dpi / edit_dpi | Low-byte DPI interpretation and one-byte X edit |
+| scroll_set_direction / scroll_is_inverted | Wheel direction decode and flip |
 | pack_backup / valid_backup / save_backup / load_backup | Fixed layout, corruption check, exclusive temporary backup |
-| main | CLI, layout guards, dry run, no-op, preflight, write/readback/activation |
+| commit_profile | Guarded profile write: backup, preflight, write, readback, activate |
+| main | CLI dispatch, layout guards, dry run, no-op, preflight |
 | self_test | Pure packet, encoding/preservation and backup tests |
 | a22a-dpi-test.c | Includes implementation under mocked syscall names; never opens a device |
 
@@ -81,7 +83,8 @@ scope rather than turning this into a generic arbitrary-command sender.
 Self-tests check checksum examples, eight slots across all positive eight-bit raw
 values, preservation of all unrelated bytes, backup roundtrip and detection of a
 single-bit corruption in each backup byte. The broad offline encoding sweep is
-not permission to write all those values to hardware; CLI set retains its guardrail.
+not permission to write all those values to hardware; the `dpi` subcommand retains
+its 100..6300 guardrail.
 
 Mocked transport tests cover exact two-chunk success, remaining-count synchronization,
 invalid read/write acknowledgements, partial output/input, input timeout and stale
@@ -115,9 +118,11 @@ should execute a privileged hardware operation.
 
 For a new write experiment, agree on target and final state, close vendor software,
 avoid hardware DPI/profile buttons, keep the cable attached and record the backup.
-Run `plan`, then use the explicit `--allow-persistent-write` gate only when authorized.
-Read again in a new process and obtain functional confirmation. Do not repeat a
-write just to produce a nicer log; repeated configuration writes may consume flash life.
+Run `plan` first to preview the exact byte changes; writing subcommands (`dpi`,
+`slot`, `rate`, `wheel`, `restore`) apply immediately without a
+confirmation gate. Read again in a new process and obtain functional confirmation.
+Do not repeat a write just to produce a nicer log; repeated configuration writes
+may consume flash life.
 
 ## Failures and recovery limits
 
@@ -153,13 +158,12 @@ verified firmware rescue procedure in this project.
 
 ## Known limitation / deferred items
 
-- Combination-key slot switching (side button + right button) behaves like the DPI
-  cycle action but is not represented in the 16 single-button records. Its trigger
-  is likely a firmware-level mapping or an undecoded configuration field (e.g. the
-  unknown `0x0c` button types or unknown offsets 65..69/76..81/101..102). The
-  original vendor driver reportedly cannot modify this combination either. Pending
-  further evidence (vendor-software capture or agreed single-field probing), no
-  modification or disabling is implemented. Do not guess unknown bytes.
+- Combination-key slot switching (side button + right button) is a firmware-level
+  DPI step shortcut, not represented in the 16 single-button records (type 0x0c is
+  a left-click synonym, not a chord). A read-only probe confirmed it changes the
+  sensor resolution directly, leaves no HID-observable state, and does not change
+  the active slot. It cannot be disabled or modified through HID. See
+  [EXPERIMENTS.md](EXPERIMENTS.md). Do not guess unknown bytes.
 - `sensor_srom_id = 0x03` and register pairs `(0x2e,0x10)/(0x42,0x00)` remain
   undecoded without the NDA sensor datasheet.
 

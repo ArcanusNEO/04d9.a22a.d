@@ -232,14 +232,14 @@ This empirically explains every observed anomaly: 6400 (raw 64) became the slowe
 8000 (raw 80) behaved like 1600, and "6 is faster than 7" (raw 62 > raw 80). It is
 consistent with the firmware passing the low six bits of the host value to the sensor.
 
-The CLI therefore accepts `set`/`plan` DPI from 100..6300 by 100, writes only
+The CLI therefore accepts `dpi`/`plan` values from 100..6300 by 100, writes only
 `84 + slot - 1`, and preserves both candidate high masks. If the selected X
 high-mask bit is set, writes are refused. Displayed values apply the six-bit mask,
 including untested/inactive slots, so a stored 224 (raw 224) is reported as
 224 & 63 = 32, i.e. 3200 CPI, not 22400. Count and enable mask are displayed using
 the reference interpretation but never normalized/written.
 
-Restore may reinstate a backed-up low-byte value outside the set command's range
+Restore may reinstate a backed-up low-byte value outside the `dpi` command's range
 (it also re-applies the six-bit mask for display). It still requires the inspected
 scales, compatible layout and clear selected X high-mask bit, and permits no
 unrelated byte differences.
@@ -252,6 +252,11 @@ Record 0: 01 00 f0 00 (left), 1: f1 (right), 2: f2 (middle), 3: f3 (side 4),
 (DPI cycle). Records 14/15: 04 00 02 00 / 04 00 01 00 (down/up scroll).
 These meanings align with S2, but physical-control mapping was not systematically
 tested. Other records include unknown special actions.
+
+Type 0x0c is a left-click synonym (the reference driver maps `{0x0c,{0}}` to
+button 1). Types 0x05 (rate) and 0x0b (special) have labels but no decoded payload
+in the reference driver. A firmware-level chord (side button + right button = DPI
+step) is not represented in this table at all; see [EXPERIMENTS.md](EXPERIMENTS.md).
 
 The button block is read with 8d and written with 0d, using the same two-chunk
 transport as the profile block. Only the scroll direction records are currently
