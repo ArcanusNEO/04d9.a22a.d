@@ -121,11 +121,20 @@ of constructing USB setup packets itself. Successful feature ioctls return 9 byt
 | 8d | Read buttons | Same block transport as 8c | Historical probe only |
 | 0c | Write profile | ARG0 profile, ARG1=80 hex, synchronized output chunks | Used; two writes passed |
 | 04 | Select resolution | ARG0 profile, ARG1 slot | Used to reselect current slot |
+| 83 | Get report rate | ARG0 profile; ARG1 response is the rate code | Used |
+| 03 | Set report rate | ARG0 profile, ARG1 rate code | Used; 1000 -> 500 confirmed |
 
-Reference rate encoding: 01=1000 Hz, 02=500 Hz, 04=250 Hz, 08=125 Hz. Initial
-profile-1 query returned 01. Profile indices are zero-based in the reference;
-resolution slots are one-based. The code accepts profile indices 0..5 and slots
-1..8, but active profile 1 / slot 1 is the only tested write destination.
+Rate encoding: 01=1000 Hz, 02=500 Hz, 04=250 Hz, 08=125 Hz. The active profile's
+rate is a standalone command; it does not rewrite the 128-byte configuration block.
+Observed: profile 1 returned code 01 (1000 Hz) initially, then code 02 (500 Hz)
+after the owner-authorized `rate 500`. Profile 0 returned code 02 (500 Hz) on query.
+Profile indices are zero-based in the reference; resolution slots are one-based.
+The code accepts profile indices 0..5 and slots 1..8, but active profile 1 / slot 1
+is the only tested write destination.
+
+The configuration block's `enabled_rates` field (offset 64, observed 0x8f) is a
+candidate bitmask of rates the firmware offers, and was not modified by the 03
+command. The active rate applied via 03 was verified by re-querying 83.
 
 ### Read transaction
 
@@ -158,10 +167,12 @@ Both successful experiments passed the stricter command/profile readiness checks
 
 ### Commands not authorized by this implementation
 
-S2 defines writes 02 (active profile), 03 (rate), 0d (button block), 0f (macro),
+S2 defines writes 02 (active profile), 0d (button block), 0f (macro),
 and read 8f (macro). They have not been exercised on this A22A in this project.
-The reference explicitly labels 0e and 0f with ARG0 > 50 dangerous. This is not a
-complete list of unsafe combinations. No generic raw-command CLI is provided.
+Command 03 (rate) is now implemented and validated; command 02 (active profile)
+remains unimplemented. The reference explicitly labels 0e and 0f with ARG0 > 50
+dangerous. This is not a complete list of unsafe combinations. No generic
+raw-command CLI is provided.
 
 ## Profile layout
 

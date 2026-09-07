@@ -176,6 +176,20 @@ Recorded as inference, not a read die marking:
 The CLI now limits `set`/`plan` to 100..6300 and displays stored raw values through
 the six-bit mask, so an inactive 224 is reported as 32 (3200 CPI), not 22400.
 
+## Report rate
+
+Query command `83 {profile}` returns the active rate code in ARG1; codes 01/02/04/08
+map to 1000/500/250/125 Hz. Set command `03 {profile, code}` applies a rate directly
+and does not rewrite the 128-byte configuration block.
+
+Observed: profile 1 initially returned code 01 (1000 Hz); profile 0 returned 02
+(500 Hz). The owner authorized `rate 500`; command 03 {profile=1, code=02} succeeded,
+and a subsequent 83 query returned code 02 (500 Hz). The configuration block's
+`enabled_rates` field (offset 64, 0x8f) was left unchanged by this command.
+
+The `rate` subcommand now supports 125/250/500/1000 Hz with a pre-query no-op check
+and post-write readback verification.
+
 ## What remains unmeasured
 
 - Physical X/Y counts per inch and their before/after ratios.

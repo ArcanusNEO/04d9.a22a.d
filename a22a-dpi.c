@@ -74,6 +74,36 @@ static int current(int fd, uint8_t *profile, uint8_t *slot)
     return 0;
 }
 
+static const unsigned rate_hz[] = { 0, 1000, 500, 0, 250, 0, 0, 0, 125 };
+
+static unsigned raw_to_rate_hz(uint8_t raw)
+{
+    if (raw < sizeof(rate_hz) / sizeof(rate_hz[0]))
+        return rate_hz[raw];
+    return 0;
+}
+
+static uint8_t rate_to_raw(unsigned hz)
+{
+    switch (hz) {
+    case 1000: return 0x01;
+    case 500:  return 0x02;
+    case 250:  return 0x04;
+    case 125:  return 0x08;
+    default:   return 0;
+    }
+}
+
+/* Query the active report rate code for a profile. Returns the raw code or 0. */
+static int get_rate(int fd, uint8_t profile, uint8_t *raw)
+{
+    uint8_t reply[9];
+    if (query(fd, 0x83, profile, reply) || reply[2] != profile)
+        return -1;
+    *raw = reply[3];
+    return 0;
+}
+
 static int read_profile(int fd, uint8_t profile, uint8_t data[BLOCK])
 {
     uint8_t reply[9], chunk[65];
@@ -328,15 +358,18 @@ int main(int argc, char **argv)
     bool restore = argc == 4 && !strcmp(argv[1], "restore");
     bool switch_slot = argc == 4 && !strcmp(argv[1], "switch");
     bool set_count = argc == 4 && !strcmp(argv[1], "count");
-    if (!show && !plan && (!(set || restore || switch_slot || set_count) || strcmp(argv[3], "--allow-persistent-write"))) {
+    bool set_rate = argc == 4 && !strcmp(argv[1], "rate");
+    if (!show && !plan && (!(set || restore || switch_slot || set_count || set_rate) || strcmp(argv[3], "--allow-persistent-write"))) {
         fprintf(stderr, "Usage:\n  %s show\n  %s --self-test\n  %s plan DPI\n"
                 "  %s set DPI --allow-persistent-write\n"
                 "  %s switch SLOT --allow-persistent-write\n"
                 "  %s count N --allow-persistent-write\n"
+                "  %s rate HZ --allow-persistent-write\n"
                 "  %s restore BACKUP --allow-persistent-write\n"
                 "Experimental shared-X DPI, step 100, sensor 6-bit (100..6300).\n"
+                "Rate options: 125, 250, 500, 1000.\n"
                 "Writes may persist. Close vendor software; do not unplug during writes.\n",
-                argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
+                argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
         return 2;
     }
     unsigned dpi = 0;
@@ -366,6 +399,15 @@ int main(int argc, char **argv)
             fail("Count must be 1..8; device not opened.");
         target_count = (unsigned)value;
     }
+    unsigned target_hz = 0;
+    if (set_rate) {
+        char *end;
+        errno = 0;
+        unsigned long value = strtoul(argv[2], &end, 10);
+        if (errno || end == argv[2] || *end || !rate_to_raw((unsigned)value))
+            fail("Rate must be 125, 250, 500 or 1000; device not opened.");
+        target_hz = (unsigned)value;
+    }
     int fd = open_mouse();
     uint8_t profile, slot, original[BLOCK], target[BLOCK], verify[BLOCK];
     if (current(fd, &profile, &slot) || read_profile(fd, profile, original))
@@ -376,6 +418,12 @@ int main(int argc, char **argv)
            raw_dpi(original, slot, true));
     printf("Candidate count=%u, enabled mask=0x%02x, scale X/Y=%u/%u\n",
            original[70], original[100], original[74], original[75]);
+    uint8_t rate_raw;
+    if (get_rate(fd, profile, &rate_raw) == 0)
+        printf("Report rate raw=0x%02x (~%u Hz); enabled-rates field=0x%02x\n",
+               rate_raw, raw_to_rate_hz(rate_raw), original[64]);
+    else
+        printf("Report rate query failed; enabled-rates field=0x%02x\n", original[64]);
     printf("Sensor inferred PAW33xx 6-bit; raw>=64 wraps mod 64 (0..63 => 0..6300 CPI).\n"
            "Unverified high masks X/Y=0x%02x/0x%02x; displayed DPI uses low 6 bits.\n",
            original[82], original[83]);
@@ -420,6 +468,25 @@ int main(int argc, char **argv)
         commit_profile(fd, profile, slot, original, target);
         printf("Resolution count set to %u (offset 70).\n"
                "Active slot %u was reselected after the write.\n", target_count, slot);
+        close(fd);
+        return 0;
+    }
+    if (set_rate) {
+        uint8_t raw = rate_to_raw(target_hz), current_raw;
+        if (get_rate(fd, profile, &current_raw))
+            fail("Cannot query current rate; no write attempted.");
+        if (raw == current_raw) {
+            printf("Rate already %u Hz; no write performed.\n", target_hz);
+            close(fd);
+            return 0;
+        }
+        if (send_command(fd, 0x03, profile, raw))
+            fail("Rate set command failed; no change confirmed.");
+        if (get_rate(fd, profile, &current_raw) || current_raw != raw)
+            fail("Rate readback mismatch after write; state uncertain.");
+        printf("Report rate set to %u Hz (raw 0x%02x), profile %u.\n"
+               "Applied via command 03; no configuration block was rewritten.\n",
+               target_hz, raw, profile);
         close(fd);
         return 0;
     }

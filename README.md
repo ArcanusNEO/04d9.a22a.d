@@ -30,11 +30,12 @@ This remains an experimental single-device tool, not a universal Holtek driver.
 
 Implemented: device/revision/descriptor checks, current profile/slot reads, profile
 download, DPI inspection and dry-run diff, guarded set, backup and restricted restore,
-explicit resolution-count (`count`) and active-slot (`switch`) control.
+explicit resolution-count (`count`) and active-slot (`switch`) control, and report
+rate (`rate`) control.
 
-Not implemented: independent XY control, RGB, remapping, macros, firmware access,
-GUI, daemon, udev rule installation, or automatic support for other Holtek VID/PID
-combinations.
+Not implemented: active-profile switching, independent XY control, RGB, remapping,
+macros, firmware access, GUI, daemon, udev rule installation, or automatic support
+for other Holtek VID/PID combinations.
 
 ## Build and offline tests
 
@@ -94,6 +95,15 @@ sudo ./build/a22a-dpi switch 7 --allow-persistent-write
 
 `switch` does not auto-modify `count`; it only sends the slot-selection command and
 reports failure if the firmware rejects it.
+
+The report rate can be changed with command 03, independent of the configuration
+block. Options are 125, 250, 500 and 1000 Hz:
+
+```sh
+sudo ./build/a22a-dpi rate 500 --allow-persistent-write
+```
+
+The current rate is also shown by `show`.
 
 Each actual modification first creates a flushed 0600 backup in `/tmp`, and prints
 its unique path. Restore takes the actual printed filename, not this placeholder:
