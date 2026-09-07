@@ -190,6 +190,18 @@ and a subsequent 83 query returned code 02 (500 Hz). The configuration block's
 The `rate` subcommand now supports 125/250/500/1000 Hz with a pre-query no-op check
 and post-write readback verification.
 
+## Wheel direction
+
+The owner reported that the vendor driver's bug had left the middle-click wheel
+scrolling inverted and unable to recover. Button-block records 14/15 (offsets 56/60)
+held `04 00 02 00` / `04 00 01 00`, i.e. down/up swapped, which `show` decoded as
+`inverted`. The `wheel` subcommand flips the direction by swapping only those two
+event bytes; the recorded write changed `inverted -> normal` and readback matched.
+The backup of the inverted state is `/tmp/a22a-dpi-backup-yjc5e7`.
+
+The interface was then consolidated into a single `wheel` action that toggles the
+current direction, rather than requiring an explicit `normal`/`inverted` argument.
+
 ## What remains unmeasured
 
 - Physical X/Y counts per inch and their before/after ratios.

@@ -30,8 +30,8 @@ This remains an experimental single-device tool, not a universal Holtek driver.
 
 Implemented: device/revision/descriptor checks, current profile/slot reads, profile
 download, DPI inspection and dry-run diff, guarded set, backup and restricted restore,
-explicit resolution-count (`count`) and active-slot (`switch`) control, and report
-rate (`rate`) control.
+explicit resolution-count (`count`) and active-slot (`switch`) control, report rate
+(`rate`) control, and wheel direction toggle (`wheel`).
 
 Not implemented: active-profile switching, independent XY control, RGB, remapping,
 macros, firmware access, GUI, daemon, udev rule installation, or automatic support
@@ -104,6 +104,15 @@ sudo ./build/a22a-dpi rate 500 --allow-persistent-write
 ```
 
 The current rate is also shown by `show`.
+
+The wheel scroll direction can be flipped with a single toggle (button block command
+0d). This also recovers from the vendor driver's inverted-scroll bug:
+
+```sh
+sudo ./build/a22a-dpi wheel --allow-persistent-write
+```
+
+The current wheel direction is also shown by `show`.
 
 Each actual modification first creates a flushed 0600 backup in `/tmp`, and prints
 its unique path. Restore takes the actual printed filename, not this placeholder:

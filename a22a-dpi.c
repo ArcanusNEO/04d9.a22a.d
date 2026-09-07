@@ -104,12 +104,13 @@ static int get_rate(int fd, uint8_t profile, uint8_t *raw)
     return 0;
 }
 
-static int read_profile(int fd, uint8_t profile, uint8_t data[BLOCK])
+/* Read a 128-byte block. cmd is the read command (0x8c profile, 0x8d buttons). */
+static int read_block(int fd, uint8_t cmd, uint8_t profile, uint8_t data[BLOCK])
 {
     uint8_t reply[9], chunk[65];
     struct pollfd p = { .fd = fd, .events = POLLIN };
     /* Do not discard unexplained reports and risk interpreting stale data. */
-    if (poll(&p, 1, 0) != 0 || query(fd, 0x8c, profile, reply) ||
+    if (poll(&p, 1, 0) != 0 || query(fd, cmd, profile, reply) ||
         reply[2] != profile || reply[3] != BLOCK)
         return -1;
     for (int i = 0; i < 2; i++) {
@@ -122,12 +123,22 @@ static int read_profile(int fd, uint8_t profile, uint8_t data[BLOCK])
     return 0;
 }
 
-static int ready(int fd, uint8_t profile, uint8_t remaining)
+static int read_profile(int fd, uint8_t profile, uint8_t data[BLOCK])
+{
+    return read_block(fd, 0x8c, profile, data);
+}
+
+static int read_buttons(int fd, uint8_t profile, uint8_t data[BLOCK])
+{
+    return read_block(fd, 0x8d, profile, data);
+}
+
+static int ready(int fd, uint8_t cmd, uint8_t profile, uint8_t remaining)
 {
     uint8_t reply[9];
     const struct timespec delay = { .tv_nsec = 1000000 };
     for (int i = 0; i < 50; i++) {
-        if (get_feature(fd, reply) || reply[0] || reply[1] != 0x0c ||
+        if (get_feature(fd, reply) || reply[0] || reply[1] != cmd ||
             reply[2] != profile)
             return -1;
         if (reply[3] == remaining)
@@ -137,20 +148,30 @@ static int ready(int fd, uint8_t profile, uint8_t remaining)
     return -1;
 }
 
-static int write_profile(int fd, uint8_t profile, const uint8_t data[BLOCK])
+static int write_block(int fd, uint8_t cmd, uint8_t profile, const uint8_t data[BLOCK])
 {
     uint8_t out[65] = {0};
-    if (send_command(fd, 0x0c, profile, BLOCK))
+    if (send_command(fd, cmd, profile, BLOCK))
         return -1;
     /* The reference protocol warns that unsynchronized writes can soft-brick. */
     for (int i = 0; i < 2; i++) {
-        if (ready(fd, profile, (uint8_t)(BLOCK - i * 64)))
+        if (ready(fd, cmd, profile, (uint8_t)(BLOCK - i * 64)))
             return -1;
         memcpy(out + 1, data + i * 64, 64);
         if (write(fd, out, sizeof(out)) != (ssize_t)sizeof(out))
             return -1;
     }
-    return ready(fd, profile, 0);
+    return ready(fd, cmd, profile, 0);
+}
+
+static int write_profile(int fd, uint8_t profile, const uint8_t data[BLOCK])
+{
+    return write_block(fd, 0x0c, profile, data);
+}
+
+static int write_buttons(int fd, uint8_t profile, const uint8_t data[BLOCK])
+{
+    return write_block(fd, 0x0d, profile, data);
 }
 
 static unsigned raw_dpi(const uint8_t data[BLOCK], unsigned slot, bool y)
@@ -161,6 +182,41 @@ static unsigned raw_dpi(const uint8_t data[BLOCK], unsigned slot, bool y)
 static void edit_dpi(uint8_t data[BLOCK], unsigned slot, unsigned dpi)
 {
     data[84 + slot - 1] = (uint8_t)(dpi / 100);
+}
+
+/* Scroll records occupy button-config bytes 56..63: record 14 (scroll up) and
+ * record 15 (scroll down). Record layout: type(1) pad event pad. type 0x04 is
+ * scroll; event 0x01 = up, 0x02 = down (reference decoding). */
+enum { SCROLL_REC14 = 56, SCROLL_REC15 = 60, SCROLL_TYPE = 0x04 };
+enum { SCROLL_UP = 0x01, SCROLL_DOWN = 0x02 };
+
+static void scroll_set_direction(uint8_t data[BLOCK], bool inverted)
+{
+    /* Normal: rec14=up, rec15=down. Inverted: rec14=down, rec15=up. */
+    data[SCROLL_REC14 + 2] = inverted ? SCROLL_DOWN : SCROLL_UP;
+    data[SCROLL_REC15 + 2] = inverted ? SCROLL_UP : SCROLL_DOWN;
+}
+
+/* Returns true if the two scroll records are type 0x04 and currently inverted. */
+static bool scroll_is_valid(const uint8_t data[BLOCK])
+{
+    bool rec14 = data[SCROLL_REC14] == SCROLL_TYPE;
+    bool rec15 = data[SCROLL_REC15] == SCROLL_TYPE;
+    bool up14 = data[SCROLL_REC14 + 2] == SCROLL_UP;
+    bool dn14 = data[SCROLL_REC14 + 2] == SCROLL_DOWN;
+    bool up15 = data[SCROLL_REC15 + 2] == SCROLL_UP;
+    bool dn15 = data[SCROLL_REC15 + 2] == SCROLL_DOWN;
+    bool normal = rec14 && rec15 && up14 && dn15;
+    bool inverted = rec14 && rec15 && dn14 && up15;
+    return normal || inverted;
+}
+
+static bool scroll_is_inverted(const uint8_t data[BLOCK])
+{
+    return data[SCROLL_REC14] == SCROLL_TYPE &&
+           data[SCROLL_REC14 + 2] == SCROLL_DOWN &&
+           data[SCROLL_REC15] == SCROLL_TYPE &&
+           data[SCROLL_REC15 + 2] == SCROLL_UP;
 }
 
 static uint32_t checksum(const uint8_t *data, size_t size)
@@ -359,17 +415,21 @@ int main(int argc, char **argv)
     bool switch_slot = argc == 4 && !strcmp(argv[1], "switch");
     bool set_count = argc == 4 && !strcmp(argv[1], "count");
     bool set_rate = argc == 4 && !strcmp(argv[1], "rate");
-    if (!show && !plan && (!(set || restore || switch_slot || set_count || set_rate) || strcmp(argv[3], "--allow-persistent-write"))) {
+    bool flip_wheel = argc == 3 && !strcmp(argv[1], "wheel");
+    if (!show && !plan && !(set || restore || switch_slot || set_count || set_rate || flip_wheel) &&
+        (!(set || restore || switch_slot || set_count || set_rate) || strcmp(argv[3], "--allow-persistent-write")) &&
+        (!flip_wheel || strcmp(argv[2], "--allow-persistent-write"))) {
         fprintf(stderr, "Usage:\n  %s show\n  %s --self-test\n  %s plan DPI\n"
                 "  %s set DPI --allow-persistent-write\n"
                 "  %s switch SLOT --allow-persistent-write\n"
                 "  %s count N --allow-persistent-write\n"
                 "  %s rate HZ --allow-persistent-write\n"
+                "  %s wheel --allow-persistent-write\n"
                 "  %s restore BACKUP --allow-persistent-write\n"
                 "Experimental shared-X DPI, step 100, sensor 6-bit (100..6300).\n"
                 "Rate options: 125, 250, 500, 1000.\n"
                 "Writes may persist. Close vendor software; do not unplug during writes.\n",
-                argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
+                argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0], argv[0]);
         return 2;
     }
     unsigned dpi = 0;
@@ -424,6 +484,11 @@ int main(int argc, char **argv)
                rate_raw, raw_to_rate_hz(rate_raw), original[64]);
     else
         printf("Report rate query failed; enabled-rates field=0x%02x\n", original[64]);
+    uint8_t buttons[BLOCK];
+    if (read_buttons(fd, profile, buttons) == 0 && scroll_is_valid(buttons))
+        printf("Wheel direction: %s\n", scroll_is_inverted(buttons) ? "inverted" : "normal");
+    else
+        printf("Wheel direction: unknown (scroll records unrecognized)\n");
     printf("Sensor inferred PAW33xx 6-bit; raw>=64 wraps mod 64 (0..63 => 0..6300 CPI).\n"
            "Unverified high masks X/Y=0x%02x/0x%02x; displayed DPI uses low 6 bits.\n",
            original[82], original[83]);
@@ -487,6 +552,33 @@ int main(int argc, char **argv)
         printf("Report rate set to %u Hz (raw 0x%02x), profile %u.\n"
                "Applied via command 03; no configuration block was rewritten.\n",
                target_hz, raw, profile);
+        close(fd);
+        return 0;
+    }
+    if (flip_wheel) {
+        uint8_t buttons[BLOCK], changed[BLOCK];
+        if (read_buttons(fd, profile, buttons))
+            fail("Cannot read button config; no write attempted.");
+        if (!scroll_is_valid(buttons))
+            fail("Scroll records outside inspected layout; nothing written.");
+        bool inverted = !scroll_is_inverted(buttons);
+        memcpy(changed, buttons, BLOCK);
+        scroll_set_direction(changed, inverted);
+        for (int i = 0; i < BLOCK; i++)
+            if (changed[i] != buttons[i] && i != SCROLL_REC14 + 2 && i != SCROLL_REC15 + 2)
+                fail("Scroll edit would touch unrelated bytes; nothing written.");
+        save_backup(profile, slot, buttons);
+        fprintf(stderr, "Flipping wheel direction (button block, command 0d); all unrelated fields preserved.\n");
+        uint8_t recheck[BLOCK];
+        if (read_buttons(fd, profile, recheck) || memcmp(recheck, buttons, BLOCK))
+            fail("Button config changed during preparation; nothing written.");
+        if (write_buttons(fd, profile, changed))
+            fail("WRITE FAILED; state may be partial. Backup retained. Do not retry blindly.");
+        if (read_buttons(fd, profile, recheck) || memcmp(recheck, changed, BLOCK))
+            fail("READBACK FAILED; backup retained. No activation or automatic rollback attempted.");
+        printf("Wheel direction flipped: was %s, now %s (records 14/15: up/down events).\n"
+               "No activation command is sent; the change takes effect via the button block.\n",
+               inverted ? "normal" : "inverted", inverted ? "inverted" : "normal");
         close(fd);
         return 0;
     }

@@ -251,7 +251,26 @@ Record 0: 01 00 f0 00 (left), 1: f1 (right), 2: f2 (middle), 3: f3 (side 4),
 4: f4 (side 5), all with the same surrounding bytes. Record 5: 07 00 03 00
 (DPI cycle). Records 14/15: 04 00 02 00 / 04 00 01 00 (down/up scroll).
 These meanings align with S2, but physical-control mapping was not systematically
-tested. Other records include unknown special actions. No button write is implemented.
+tested. Other records include unknown special actions.
+
+The button block is read with 8d and written with 0d, using the same two-chunk
+transport as the profile block. Only the scroll direction records are currently
+written by this project.
+
+### Wheel direction
+
+Scroll records 14 and 15 live at byte offsets 56 and 60 in the button block. Each
+record is `type(0x04) pad event pad`; event 0x01 = up, 0x02 = down. Normal layout
+is record 14 = up, record 15 = down. Swapping the two event bytes inverts scrolling.
+
+The `wheel` subcommand flips the current direction by swapping only those two event
+bytes. It preserves every other byte, backs up the block, and verifies a full
+readback after writing via command 0d. No activation command is sent. The direction
+is also reported by `show`.
+
+The vendor driver reportedly had a bug that left this state inverted and could not
+restore it. The recorded write flipped `inverted -> normal`; the direction field is
+now a supported, reversible setting.
 
 ## Backup format
 
