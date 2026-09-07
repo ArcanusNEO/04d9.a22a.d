@@ -255,7 +255,7 @@ This empirically explains every observed anomaly: 6400 (raw 64) became the slowe
 8000 (raw 80) behaved like 1600, and "6 is faster than 7" (raw 62 > raw 80). It is
 consistent with the firmware passing the low six bits of the host value to the sensor.
 
-The CLI therefore accepts `dpi`/`plan` values from 100..6300 by 100, writes only
+The CLI therefore accepts `dpi` values from 100..6300 by 100, writes only
 `84 + slot - 1`, and preserves both candidate high masks. If the selected X
 high-mask bit is set, writes are refused. Displayed values apply the six-bit mask,
 including untested/inactive slots, so a stored 224 (raw 224) is reported as

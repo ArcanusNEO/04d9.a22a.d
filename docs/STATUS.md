@@ -10,16 +10,16 @@ which device fields are understood. Protocol details, offsets and evidence are i
 | --- | --- | --- | --- |
 | Show state | `show` (or no args) | 82/84/83/8c/8d | Yes |
 | Set current-slot DPI | `dpi DPI` | 0c + 04 | Yes (1200/1600/3200) |
-| Preview DPI change | `plan DPI` | 8c | Yes |
 | Select active slot | `slot SLOT` | 04 | Yes |
 | Set resolution count | `slot -c N SLOT` | 0c + 04 | Yes |
 | Set report rate | `rate HZ` | 03/83 | Yes (125/250/500/1000) |
-| Switch active profile | `profile N` | 02/82 | Yes (0..5) |
 | Copy profile | `profile -d SRC DST` | 0c/0d/8c/8d | Implemented (not yet hardware-verified) |
 | Flip wheel direction | `wheel` | 0d (+ 0c restore) | Yes (normal/natural) |
 | Full snapshot | `snapshot FILE` | 8c/8d (read all) | Yes |
 | Full restore | `restore FILE` | 0c/0d (write all) | Yes |
-| Self-test / offline tests | `--self-test` / `make test` | — | Yes |The wheel firmware-bug mitigation (snapshot profile 0 before the 0d write, restore
+| Self-test / offline tests | `--self-test` / `make test` | — | Yes |
+
+The wheel firmware-bug mitigation (snapshot profile 0 before the 0d write, restore
 if corrupted) is part of `wheel` and is verified to recover tracking after the bug.
 
 ## Not implemented

@@ -173,7 +173,7 @@ Recorded as inference, not a read die marking:
 - PAW3333/PAW3335 register maps are NDA; `sensor_srom_id = 0x03` and register pairs
   `(0x2e,0x10)/(0x42,0x00)` are not decoded.
 
-The CLI now limits `dpi`/`plan` to 100..6300 and displays stored raw values through
+The CLI now limits `dpi` to 100..6300 and displays stored raw values through
 the six-bit mask, so an inactive 224 is reported as 32 (3200 CPI), not 22400.
 
 ## Report rate

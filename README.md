@@ -67,11 +67,10 @@ The program finds the device dynamically; do not hardcode `/dev/hidraw6`.
 sudo ./build/main show          # 打印当前状态
 sudo ./build/main               # 无参数等价于 show
 sudo ./build/main help          # 或 -h/--help/usage/--usage
-sudo ./build/main plan 3200
 ```
 
-Both commands send query requests via SET_FEATURE, but **do not write configuration**,
-activate a slot or create backups. `plan` prints the proposed changed offsets.
+`show` sends query requests via SET_FEATURE and **does not write configuration**,
+activate a slot or create backups.
 
 All other subcommands write immediately (no confirmation gate) and may persist:
 
@@ -108,15 +107,6 @@ sudo ./build/main rate 500
 ```
 
 The current rate is also shown by `show`.
-
-The active profile can be switched with command 02. Six profiles exist (indices
-0..5); the firmware silently rejects switching to index >= 6:
-
-```sh
-sudo ./build/main profile 0
-```
-
-The current profile is also shown by `show`.
 
 A profile's config and button blocks can be duplicated into another profile
 (indices 0..5; source and destination must differ). The global profile-0 block is

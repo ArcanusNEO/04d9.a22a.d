@@ -117,7 +117,7 @@ invalid read/write acknowledgements, partial output/input, input timeout and sta
 queued data. Mock calls replace ioctl, read, write and poll at compilation time.
 
 ASan/UBSan and static analysis passed for the saved code. Hardware evidence includes
-successful show/plan, reads and two actual DPI changes with full readback and owner
+successful `show`, reads and two actual DPI changes with full readback and owner
 confirmation. The snapshot/restore roundtrip was verified against the live device.
 
 Gaps: discovery failures are not fully mocked; CLI/filesystem/snapshot failure paths
@@ -131,7 +131,6 @@ Read-only-at-the-configuration-level checks:
 
 ```sh
 sudo ./build/main show
-sudo ./build/main plan 3200
 ```
 
 Expected last accepted state: profile 1, slot 1, X low=16 (~1600), Y low=20,
@@ -144,11 +143,10 @@ should execute a privileged hardware operation.
 
 For a new write experiment, agree on target and final state, close vendor software,
 avoid hardware DPI/profile buttons, keep the cable attached and save a `snapshot`
-as a recovery point first. Run `plan` to preview the exact byte changes; writing
-subcommands (`dpi`, `slot`, `rate`, `wheel`) apply immediately without a
-confirmation gate. Read again in a new process and obtain functional confirmation.
-Do not repeat a write just to produce a nicer log; repeated configuration writes
-may consume flash life.
+as a recovery point first. Writing subcommands (`dpi`, `slot`, `rate`, `wheel`,
+`profile -d`) apply immediately without a confirmation gate. Read again in a new
+process and obtain functional confirmation. Do not repeat a write just to produce a
+nicer log; repeated configuration writes may consume flash life.
 
 ## Failures and recovery limits
 

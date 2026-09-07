@@ -583,11 +583,10 @@ static void
 print_usage (FILE *out, const char *prog)
 {
   fprintf (out,
-           "Usage:\n  %s [show]\n  %s --self-test\n  %s plan DPI\n"
+           "Usage:\n  %s [show]\n  %s --self-test\n"
            "  %s dpi DPI\n"
            "  %s slot [-c|--count N] SLOT\n"
            "  %s rate HZ\n"
-           "  %s profile N\n"
            "  %s profile [-d|--duplicate SRC] DST\n"
            "  %s wheel\n"
            "  %s snapshot FILE\n"
@@ -597,8 +596,7 @@ print_usage (FILE *out, const char *prog)
            "Rate options: 125, 250, 500, 1000. Profiles: 0..5.\n"
            "Writes are immediate and may persist. Close vendor software; do "
            "not unplug.\n",
-           prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
-           prog);
+           prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
 /* Print the current device state. verbose adds the per-slot table. */
@@ -656,7 +654,6 @@ main (int argc, char **argv)
       return 0;
     }
   bool show = argc == 1 || (argc == 2 && !strcmp (argv[1], "show"));
-  bool plan = argc == 3 && !strcmp (argv[1], "plan");
   bool set_dpi = argc == 3 && !strcmp (argv[1], "dpi");
   bool snapshot = argc == 3 && !strcmp (argv[1], "snapshot");
   bool restore = argc == 3 && !strcmp (argv[1], "restore");
@@ -670,14 +667,14 @@ main (int argc, char **argv)
   bool profile_dup
       = argc == 5 && !strcmp (argv[1], "profile")
         && (!strcmp (argv[2], "-d") || !strcmp (argv[2], "--duplicate"));
-  if (!show && !plan && !set_dpi && !snapshot && !restore && !flip_wheel
-      && !set_rate && !slot_cmd && !slot_count && !profile_cmd && !profile_dup)
+  if (!show && !set_dpi && !snapshot && !restore && !flip_wheel && !set_rate
+      && !slot_cmd && !slot_count && !profile_cmd && !profile_dup)
     {
       print_usage (stderr, argv[0]);
       return 2;
     }
   unsigned dpi = 0;
-  if (set_dpi || plan)
+  if (set_dpi)
     {
       char *end;
       errno = 0;
@@ -960,19 +957,7 @@ main (int argc, char **argv)
       || original[75] != 100)
     fail ("State outside inspected DPI layout; nothing written.");
   memcpy (target, original, BLOCK);
-  if (set_dpi || plan)
-    edit_dpi (target, slot, dpi);
-  if (plan)
-    {
-      for (unsigned i = 0; i < BLOCK; i++)
-        if (original[i] != target[i])
-          printf ("Planned offset %u: %02x -> %02x\n", i, original[i],
-                  target[i]);
-      puts ("Plan only: no backup, configuration write, or activation "
-            "performed.");
-      close (fd);
-      return 0;
-    }
+  edit_dpi (target, slot, dpi);
   if (!memcmp (original, target, BLOCK))
     {
       puts ("Already set; no configuration write, or activation needed.");
