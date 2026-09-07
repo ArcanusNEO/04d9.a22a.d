@@ -166,17 +166,22 @@ verified firmware rescue procedure in this project.
 
 ## Next development work
 
-1. Add stronger offline CLI, discovery, backup I/O and late-transfer failure tests.
-2. Confirm shared XY quantitatively with raw HID counts over measured horizontal and
+See [STATUS.md](STATUS.md) for the implemented/not-implemented feature list and
+field-understanding summary. Priority work:
+
+1. Button remapping — the button block transport is proven and single-key maps are
+   already decoded; the remaining step is a write path for records other than scroll.
+2. Add stronger offline CLI, discovery, snapshot I/O and late-transfer failure tests.
+3. Confirm shared XY quantitatively with raw HID counts over measured horizontal and
    vertical travel. OS cursor movement is unsuitable because of acceleration/scaling.
-3. Identify the MCU/sensor from non-destructive hardware information if available;
-   do not guess based on VID, profile fields or another product's driver metadata.
 4. Validate supported DPI steps/range and high-mask semantics with separately agreed
    experiments. Preserve unknown fields and record each tested value.
-5. Investigate whether 04 activation is required and whether settings survive power
+5. Capture the vendor application (if available) to confirm illumination and DPI
+   indicator color encodings before implementing them.
+6. Investigate whether 04 activation is required and whether settings survive power
    cycles, only when a disruptive test is acceptable.
-6. Add profile/slot selection, rate, RGB or remapping only after targeted evidence and
-   tests exist. Do not transplant the reference driver's whole-profile normalization.
+
+Do not transplant the reference driver's whole-profile normalization.
 
 ## Known limitation / deferred items
 

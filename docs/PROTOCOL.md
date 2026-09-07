@@ -119,10 +119,11 @@ of constructing USB setup packets itself. Successful feature ioctls return 9 byt
 | 83 | Active rate | ARG0 profile; ARG1 response is rate code | Used |
 | 84 | Active resolution | ARG0 profile; ARG1 response is one-based slot | Used |
 | 8c | Read profile | ARG0 profile; reply ARG1=80 hex; two 64-byte inputs | Used |
-| 8d | Read buttons | Same block transport as 8c | Historical probe only |
+| 8d | Read buttons | Same block transport as 8c | Used (wheel/read) |
 | 0c | Write profile | ARG0 profile, ARG1=80 hex, synchronized output chunks | Used; two writes passed |
 | 04 | Select resolution | ARG0 profile, ARG1 slot | Used to reselect current slot |
 | 03 | Set report rate | ARG0 profile, ARG1 rate code | Used; 1000 -> 500 confirmed |
+| 0d | Write buttons | ARG0 profile, ARG1=80 hex, same chunks as 0c | Used (wheel) |
 
 Rate encoding: 01=1000 Hz, 02=500 Hz, 04=250 Hz, 08=125 Hz. The active profile's
 rate is a standalone command; it does not rewrite the 128-byte configuration block.
@@ -176,45 +177,58 @@ Both successful experiments passed the stricter command/profile readiness checks
 
 ### Commands not authorized by this implementation
 
-S2 defines writes 02 (active profile), 0d (button block), 0f (macro),
-and read 8f (macro). They have not been exercised on this A22A in this project.
-Command 03 (rate) is now implemented and validated; command 02 (active profile)
-remains unimplemented. The reference explicitly labels 0e and 0f with ARG0 > 50
-dangerous. This is not a complete list of unsafe combinations. No generic
-raw-command CLI is provided.
+S2 defines writes 02 (active profile), 0f (macro), and read 8f (macro). Command 02
+and 0d/03/0c are now implemented; 0f/8f (macro) remain unimplemented. The reference
+explicitly labels 0e and 0f with ARG0 > 50 dangerous. This is not a complete list of
+unsafe combinations. No generic raw-command CLI is provided.
 
 ## Profile layout
 
-The 128-byte layout below comes from S2's packed struct. Field names alone do not
-confirm A22A semantics; only the selected X low byte has been changed experimentally.
-Profile 0 carries candidate global fields that are mostly absent in profile 1.
+Each of the six profiles exposes a 128-byte configuration block (read 8c, write 0c).
+Profile 0 additionally carries the global device state (sensor init, enabled
+profiles); profiles 1..5 are per-profile (DPI tables, local lighting, button map).
+Field names below come from S2's packed struct and are **candidate** unless marked
+"known". Only the fields explicitly marked as written have been changed on hardware.
 
-| Offset | Length | Reference meaning / evidence |
-| --- | ---: | --- |
-| 0..1 | 2 | Unknown global bytes |
-| 2 | 1 | Candidate enabled-profiles bitmask; not stable (varies with active profile) |
-| 3..4 | 2 | Unknown |
-| 5 | 1 | Candidate sensor SROM ID, not a sensor model ID |
-| 6..7 | 2 | Candidate sensor firmware size, little endian |
-| 8..15 | 8 | Candidate password field; not used for local API B transport |
-| 16..23 | 8 | Candidate DPI indicator enable data |
-| 24..47 | 24 | Candidate eight illumination RGB entries |
-| 48..63 | 16 | Opaque sensor register configuration pairs |
-| 64 | 1 | Enabled rates; observed 8f, not only the four known low bits |
-| 65..69 | 5 | Unknown |
-| 70 | 1 | Candidate resolution count; profile 1 has 1 |
-| 71 | 1 | Candidate illumination mode |
-| 72 | 1 | Candidate illumination intensity |
-| 73 | 1 | Candidate illumination speed |
-| 74..75 | 2 | Candidate X/Y scales, both 100 decimal in current profile |
-| 76..81 | 6 | Unknown; no confirmed XY-mode flag |
-| 82..83 | 2 | Candidate X/Y ninth-bit masks; interpretation unverified |
-| 84..91 | 8 | X DPI low-byte table; slot 1 at 84 confirmed writable |
-| 92..99 | 8 | Y DPI low-byte table; unchanged throughout tests |
-| 100 | 1 | Candidate enabled-resolution bitmap, observed ff |
-| 101..102 | 2 | Unknown |
-| 103 | 1 | Candidate debounce milliseconds, current profile 20 |
-| 104..127 | 24 | Eight candidate DPI RGB colors, three bytes each |
+Status legend: **known** = behavior observed on this device; **candidate** = inferred
+from the reference driver / plausibly matches, not validated; **unknown** = no
+reliable interpretation yet.
+
+| Offset | Len | Name | Status | Notes |
+| --- | ---: | --- | --- | --- |
+| 0..1 | 2 | (global) | unknown | Profile 0 = `88 00`; profile 1..5 = `ff ff` |
+| 2 | 1 | enabled profiles | candidate | Not stable; profile 0 read 0x3f then 0x00 after profile switch |
+| 3..4 | 2 | (global) | unknown | Profile 0 = `42 03`/`00 00` across states |
+| 5 | 1 | sensor SROM ID | candidate | Profile 0 = `03`; not a sensor model ID; NDA field |
+| 6..7 | 2 | sensor fw size | candidate | Little endian; profile 0 = `fe 0f` (4094) |
+| 8..15 | 8 | password | candidate | Not used for local API B transport |
+| 16..23 | 8 | DPI indicator enable | candidate | Per-DPI indicator LED enable |
+| 24..47 | 24 | illumination RGB | candidate | Eight RGB entries (3 bytes each) |
+| 48..63 | 16 | sensor reg config | candidate | Eight register/value pairs; profile 1..5 = `2e 10 42 00 00...`; NDA |
+| 64 | 1 | enabled rates | candidate | Bitmask; observed `8f` (high bits uninterpreted) |
+| 65..69 | 5 | (padding) | unknown | |
+| 70 | 1 | resolution count | **known** | Number of active slots; writable via `slot -c` |
+| 71 | 1 | illumination mode | candidate | |
+| 72 | 1 | illumination intensity | candidate | |
+| 73 | 1 | illumination speed | candidate | |
+| 74..75 | 2 | X/Y scale | candidate | Both 100 decimal; guard for DPI writes |
+| 76..81 | 6 | (padding) | unknown | No confirmed XY-mode flag |
+| 82..83 | 2 | X/Y high-bit masks | candidate | Ninth DPI bit per slot; observed `20 20` (slot 6 only) |
+| 84..91 | 8 | X DPI table | **known** | Low byte = DPI/100, 6-bit; slot 1 at 84 writable |
+| 92..99 | 8 | Y DPI table | candidate | Preserved untouched; shared-X assumed |
+| 100 | 1 | enabled resolutions | candidate | Bitmask; observed `ff` |
+| 101..102 | 2 | (padding) | unknown | |
+| 103 | 1 | debounce | candidate | Milliseconds; observed 20 (0x14) |
+| 104..127 | 24 | DPI RGB colors | candidate | Eight RGB entries (3 bytes each) |
+
+### Field status by profile
+
+Profile 0 is the global block; its offsets 0..63 hold sensor/global fields. Profiles
+1..5 have `ff ff` at 0..1, zero global fields, and their own per-profile tables
+(DPI at 84..99, count at 70, lighting at 71..73/104..127, button map in the separate
+button block). The sensor init fields (5..7, 48) exist only in profile 0, which is
+why the wheel-write firmware bug (which zeroes them) kills tracking across all
+profiles; see [EXPERIMENTS.md](EXPERIMENTS.md).
 
 ### DPI encoding and limits
 
@@ -255,21 +269,37 @@ unrelated byte differences.
 
 ### Button records
 
-The historical 8d read returned 16 four-byte records followed by 64 zero bytes.
-Record 0: 01 00 f0 00 (left), 1: f1 (right), 2: f2 (middle), 3: f3 (side 4),
-4: f4 (side 5), all with the same surrounding bytes. Record 5: 07 00 03 00
-(DPI cycle). Records 14/15: 04 00 02 00 / 04 00 01 00 (down/up scroll).
-These meanings align with S2, but physical-control mapping was not systematically
-tested. Other records include unknown special actions.
-
-Type 0x0c is a left-click synonym (the reference driver maps `{0x0c,{0}}` to
-button 1). Types 0x05 (rate) and 0x0b (special) have labels but no decoded payload
-in the reference driver. A firmware-level chord (side button + right button = DPI
-step) is not represented in this table at all; see [EXPERIMENTS.md](EXPERIMENTS.md).
-
 The button block is read with 8d and written with 0d, using the same two-chunk
-transport as the profile block. Only the scroll direction records are currently
-written by this project.
+transport as the profile block. It holds 16 four-byte records followed by 64 zero
+bytes. Each record is `type(1) data(3)`.
+
+| Type | Name | Decode | Status |
+| --- | --- | --- | --- |
+| 0x00 | keyboard | modifiers(1) hid_key(1) hid_key2(1) | candidate |
+| 0x01 | mouse | pad(1) button(1) pad(1); f0=left f1=right f2=middle f3=mb4 f4=mb5 | **known** |
+| 0x02 | acpi | | candidate |
+| 0x03 | media | pad(1) usage LE(2) | candidate |
+| 0x04 | scroll | pad(1) event(1) pad(1); 01=up 02=down | **known** (records 14/15 written) |
+| 0x05 | rate | | unknown (label only; no decode) |
+| 0x06 | report | | candidate |
+| 0x07 | dpi | pad(1) event(1) pad(1); 03=cycle | **known** |
+| 0x08 | profile | | candidate |
+| 0x09 | macro | mode(1) index(1) pad(1) | candidate |
+| 0x0a | multiclick | hid_key(1) delay(1) count(1) | candidate |
+| 0x0b | special | | unknown (label only; no decode) |
+| 0x0c | (quirks) | maps to left-click | **known** (reference quirks map) |
+
+Observed records (profile 1): 0..4 = mouse left/right/middle/mb4/mb5 (`01 00 f0..f4
+00`), 5 = DPI cycle (`07 00 03 00`), 6/9/10 = `0c 00 00 00` (left-click synonym),
+7 = `0b 00 02 02`, 8 = `0a f0 21 03` (left multiclick x3), 14/15 = scroll down/up
+(`04 00 02 00` / `04 00 01 00`), 11..13 = zero (none).
+
+Profile 0 retains the fuller factory map: rate cycle (`05 00 03 00`), media
+(`03 00 23 02` = AC Home), and a normal wheel direction.
+
+A firmware-level chord (side button + right button = DPI step) is not represented
+in this table; see [EXPERIMENTS.md](EXPERIMENTS.md). Only the scroll direction
+records (14/15) are written by this project.
 
 ### Wheel direction
 

@@ -163,6 +163,7 @@ as a recovery point before experimenting.
 | Path | Content |
 | --- | --- |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | Identity, descriptors, transport, commands, fields, backup layout |
+| [docs/STATUS.md](docs/STATUS.md) | Implemented/not-implemented features and field understanding |
 | [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Evidence, raw baseline blocks, successful writes, validation limits |
 | [docs/SOURCES.md](docs/SOURCES.md) | Pinned code sources, official documents, comparison and provenance |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Build/test workflow, code map, safeguards, next work |
