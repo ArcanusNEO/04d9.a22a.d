@@ -608,16 +608,16 @@ print_usage (FILE *out, const char *prog)
            "  %s led color SLOT RRGGBB\n"
            "  %s led mode MODE\n"
            "  %s led brightness 0..255\n"
+           "  %s led speed 0..255\n"
            "  %s help|-h|--help\n"
            "Experimental shared-X DPI, step 100, sensor 6-bit (100..6300).\n"
            "Rate options: 125, 250, 500, 1000. Profiles: 0..5.\n"
            "Lighting modes: off, single, waterflow, breathing. Colors are hex "
            "RRGGBB.\n"
-           "Lighting writes are refused on profile 0/1; activate >= 2 first.\n"
            "Writes are immediate and may persist. Close vendor software; do "
            "not unplug.\n",
            prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
-           prog, prog);
+           prog, prog, prog);
 }
 
 /* Decode the illumination mode byte. Probe results on A22A: the low two bits
@@ -802,9 +802,12 @@ main (int argc, char **argv)
       = argc == 4 && !strcmp (argv[1], "led") && !strcmp (argv[2], "mode");
   bool led_brightness = argc == 4 && !strcmp (argv[1], "led")
                         && !strcmp (argv[2], "brightness");
+  bool led_speed
+      = argc == 4 && !strcmp (argv[1], "led") && !strcmp (argv[2], "speed");
   if (!show && !show_profile && !set_dpi && !snapshot && !restore
       && !flip_wheel && !set_rate && !slot_cmd && !slot_count && !profile_cmd
-      && !profile_dup && !led_color && !led_mode && !led_brightness)
+      && !profile_dup && !led_color && !led_mode && !led_brightness
+      && !led_speed)
     {
       print_usage (stderr, argv[0]);
       return 2;
@@ -914,6 +917,9 @@ main (int argc, char **argv)
   unsigned led_brightness_value = 0;
   if (led_brightness)
     led_brightness_value = parse_byte_arg (argv[3]);
+  unsigned led_speed_value = 0;
+  if (led_speed)
+    led_speed_value = parse_byte_arg (argv[3]);
   int fd = open_mouse ();
   uint8_t profile, slot, original[BLOCK], target[BLOCK];
   if (current (fd, &profile, &slot) || read_profile (fd, profile, original))
@@ -1121,12 +1127,9 @@ main (int argc, char **argv)
       close (fd);
       return 0;
     }
-  if (led_color || led_mode || led_brightness)
+  if (led_color || led_mode || led_brightness || led_speed)
     {
       uint8_t snap[SNAP_SIZE];
-      if (profile < 2)
-        fail ("Refusing to write lighting on profile 0/1; activate a profile "
-              ">= 2 first.");
       if (read_snapshot (fd, snap))
         fail ("Cannot read full device snapshot.");
       char archive[PATH_MAX];
@@ -1143,8 +1146,10 @@ main (int argc, char **argv)
         }
       else if (led_mode)
         target[ILLUM_MODE] = (uint8_t)led_mode_value;
-      else
+      else if (led_brightness)
         target[ILLUM_INTENSITY] = (uint8_t)led_brightness_value;
+      else
+        target[ILLUM_SPEED] = (uint8_t)led_speed_value;
       if (!memcmp (original, target, BLOCK))
         {
           puts ("Already set; no configuration write performed.");
