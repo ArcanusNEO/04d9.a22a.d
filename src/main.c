@@ -4,6 +4,7 @@
 #include <glob.h>
 #include <linux/hidraw.h>
 #include <linux/input.h>
+#include <limits.h>
 #include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -604,34 +605,96 @@ print_usage (FILE *out, const char *prog)
            "  %s wheel\n"
            "  %s snapshot FILE\n"
            "  %s restore FILE\n"
+           "  %s led color SLOT RRGGBB\n"
+           "  %s led mode MODE\n"
+           "  %s led brightness 0..255\n"
            "  %s help|-h|--help\n"
            "Experimental shared-X DPI, step 100, sensor 6-bit (100..6300).\n"
            "Rate options: 125, 250, 500, 1000. Profiles: 0..5.\n"
+           "Lighting modes: off, single, waterflow, breathing. Colors are hex "
+           "RRGGBB.\n"
+           "Lighting writes are refused on profile 0/1; activate >= 2 first.\n"
            "Writes are immediate and may persist. Close vendor software; do "
            "not unplug.\n",
-           prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
+           prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
+           prog, prog);
 }
 
-/* Decode the illumination mode byte. The reference family lists six modes
- * (AlwaysOff/SingleColor/MultiColor/Gyratory/WaterFlow/Custom) but A22A only
- * observed 01/03/05, so this maps to descriptive labels rather than asserting
- * the reference numbering. */
+/* Decode the illumination mode byte. Probe results on A22A: the low two bits
+ * select the effect (0=off, 1=single, 2=waterflow, 3=breathing); the upper
+ * bits repeat these four effects and were not visibly distinct. The single
+ * mode shows the current slot's DPI color, held steady when speed==0 or
+ * blinking when speed>0. */
 static const char *
 illum_mode_name (uint8_t mode)
 {
-  switch (mode)
+  switch (mode & 0x03)
     {
     case 0x00:
       return "off";
     case 0x01:
-      return "steady";
+      return "single";
+    case 0x02:
+      return "waterflow";
     case 0x03:
-      return "multi";
-    case 0x05:
-      return "custom";
+      return "breathing";
     default:
       return "unknown";
     }
+}
+
+static int
+illum_mode_from_name (const char *name)
+{
+  if (!strcmp (name, "off"))
+    return 0x00;
+  if (!strcmp (name, "single"))
+    return 0x01;
+  if (!strcmp (name, "waterflow"))
+    return 0x02;
+  if (!strcmp (name, "breathing"))
+    return 0x03;
+  return -1;
+}
+
+static bool
+parse_hex_byte (const char *s, uint8_t *out)
+{
+  char *end;
+  errno = 0;
+  unsigned long v = strtoul (s, &end, 16);
+  if (errno || end == s || *end || v > 255)
+    return false;
+  *out = (uint8_t)v;
+  return true;
+}
+
+static bool
+parse_rgb (const char *s, uint8_t rgb[3])
+{
+  if (strlen (s) != 6)
+    return false;
+  char part[3];
+  for (unsigned i = 0; i < 3; i++)
+    {
+      part[0] = s[i * 2];
+      part[1] = s[i * 2 + 1];
+      part[2] = 0;
+      if (!parse_hex_byte (part, &rgb[i]))
+        return false;
+    }
+  return true;
+}
+
+static unsigned
+parse_byte_arg (const char *s)
+{
+  char *end;
+  errno = 0;
+  unsigned long v = strtoul (s, &end, 10);
+  if (errno || end == s || *end || v > 255)
+    fail ("Argument must be 0..255.");
+  return (unsigned)v;
 }
 
 /* Print the lighting fields of the active profile's configuration block. All
@@ -733,9 +796,15 @@ main (int argc, char **argv)
   bool profile_dup
       = argc == 5 && !strcmp (argv[1], "profile")
         && (!strcmp (argv[2], "-d") || !strcmp (argv[2], "--duplicate"));
+  bool led_color
+      = argc == 5 && !strcmp (argv[1], "led") && !strcmp (argv[2], "color");
+  bool led_mode
+      = argc == 4 && !strcmp (argv[1], "led") && !strcmp (argv[2], "mode");
+  bool led_brightness = argc == 4 && !strcmp (argv[1], "led")
+                        && !strcmp (argv[2], "brightness");
   if (!show && !show_profile && !set_dpi && !snapshot && !restore
       && !flip_wheel && !set_rate && !slot_cmd && !slot_count && !profile_cmd
-      && !profile_dup)
+      && !profile_dup && !led_color && !led_mode && !led_brightness)
     {
       print_usage (stderr, argv[0]);
       return 2;
@@ -821,6 +890,30 @@ main (int argc, char **argv)
         fail ("Rate must be 125, 250, 500 or 1000; device not opened.");
       target_hz = (unsigned)value;
     }
+  unsigned led_slot = 0;
+  uint8_t led_rgb[3] = { 0, 0, 0 };
+  if (led_color)
+    {
+      char *end;
+      errno = 0;
+      unsigned long value = strtoul (argv[3], &end, 10);
+      if (errno || end == argv[3] || *end || value < 1 || value > 8)
+        fail ("Slot must be 1..8; device not opened.");
+      led_slot = (unsigned)value;
+      if (!parse_rgb (argv[4], led_rgb))
+        fail ("Color must be 6 hex digits RRGGBB; device not opened.");
+    }
+  int led_mode_value = -1;
+  if (led_mode)
+    {
+      led_mode_value = illum_mode_from_name (argv[3]);
+      if (led_mode_value < 0)
+        fail ("Mode must be off, single, waterflow or breathing; device not "
+              "opened.");
+    }
+  unsigned led_brightness_value = 0;
+  if (led_brightness)
+    led_brightness_value = parse_byte_arg (argv[3]);
   int fd = open_mouse ();
   uint8_t profile, slot, original[BLOCK], target[BLOCK];
   if (current (fd, &profile, &slot) || read_profile (fd, profile, original))
@@ -1025,6 +1118,44 @@ main (int argc, char **argv)
             write_buttons (fd, p, blocks[p][1]);
         }
       printf ("Restored full snapshot from %s\n", argv[2]);
+      close (fd);
+      return 0;
+    }
+  if (led_color || led_mode || led_brightness)
+    {
+      uint8_t snap[SNAP_SIZE];
+      if (profile < 2)
+        fail ("Refusing to write lighting on profile 0/1; activate a profile "
+              ">= 2 first.");
+      if (read_snapshot (fd, snap))
+        fail ("Cannot read full device snapshot.");
+      char archive[PATH_MAX];
+      snprintf (archive, sizeof (archive), "a22a-pre-light-%ld.snap",
+                (long)time (NULL));
+      save_snapshot (snap, archive);
+      fprintf (stderr, "Archived pre-write snapshot to %s\n", archive);
+      memcpy (target, original, BLOCK);
+      if (led_color)
+        {
+          target[DPI_COLOR + (led_slot - 1) * 3] = led_rgb[0];
+          target[DPI_COLOR + (led_slot - 1) * 3 + 1] = led_rgb[1];
+          target[DPI_COLOR + (led_slot - 1) * 3 + 2] = led_rgb[2];
+        }
+      else if (led_mode)
+        target[ILLUM_MODE] = (uint8_t)led_mode_value;
+      else
+        target[ILLUM_INTENSITY] = (uint8_t)led_brightness_value;
+      if (!memcmp (original, target, BLOCK))
+        {
+          puts ("Already set; no configuration write performed.");
+          print_state (fd, true, -1);
+          close (fd);
+          return 0;
+        }
+      commit_profile (fd, profile, slot, original, target);
+      printf ("Lighting written to profile %u (via command 0c, guarded).\n",
+              profile);
+      print_state (fd, true, -1);
       close (fd);
       return 0;
     }
