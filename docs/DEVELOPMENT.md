@@ -93,7 +93,7 @@ those paths already contain something important. Never run builds as root.
 | pack_snapshot / valid_snapshot / unpack_snapshot / read_snapshot / save_snapshot / load_snapshot | Full-device snapshot, checksum, save/restore |
 | commit_profile | Guarded profile write: preflight, write, readback, activate |
 | print_usage / print_state | Usage text and post-change state reporting |
-| main | CLI dispatch, layout guards, dry run, no-op, preflight, wheel bug mitigation |
+| main | CLI dispatch, layout guards, no-op, preflight, wheel bug mitigation |
 | self_test | Pure packet, encoding/preservation and snapshot tests |
 | test/main.c | Includes src/main.c under mocked syscall names; never opens a device |
 
@@ -117,9 +117,10 @@ Mocked transport tests cover exact two-chunk success, remaining-count synchroniz
 invalid read/write acknowledgements, partial output/input, input timeout and stale
 queued data. Mock calls replace ioctl, read, write and poll at compilation time.
 
-ASan/UBSan and static analysis passed for the saved code. Hardware evidence includes
+ASan/UBSan passed for the saved code. Hardware evidence includes
 successful `show`, reads and two actual DPI changes with full readback and owner
-confirmation. The snapshot/restore roundtrip was verified against the live device.
+confirmation. The snapshot/restore roundtrip was verified against the live device, and a baseline
+snapshot (`recovery/a22a-baseline.snap`) is committed as a recovery point.
 
 Gaps: discovery failures are not fully mocked; CLI/filesystem/snapshot failure paths
 are not comprehensively tested; the physical restore path, unplug failures, different

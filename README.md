@@ -1,50 +1,41 @@
 # 04d9:a22a Holtek / E-Signal mouse configuration
 
 A small Linux userspace configuration driver in C for the inspected
-`04d9:a22a`, `bcdDevice=0101`, E-Signal USB Gaming Mouse. It uses the existing
-kernel hidraw interface; it is **not** a kernel module or a replacement input driver.
+`04d9:a22a`, `bcdDevice=0101`, E-Signal USB Gaming Mouse. It uses the kernel
+hidraw interface; it is **not** a kernel module or a replacement input driver.
 
 ## Status
 
 As of 2026-09-07, current-slot DPI writes **1200 -> 3200 -> 1600** succeeded on
-the connected mouse. Full profile readback passed before and after slot activation,
-and the owner confirmed that both changes worked. The last intentionally retained
-setting is **1600 DPI, profile index 1, slot 1**. These are wire indices.
+the connected mouse, with full profile readback before and after slot activation.
+The last retained setting is **1600 DPI, profile 1, slot 1** (wire indices).
 
-Changing only the X table worked while the Y table remained unchanged. This is
-practical evidence for shared-X DPI in the tested configuration, not proof of an
-identified firmware XY-mode flag. Sensor identity, accurate physical CPI, full DPI
-range, other revisions and power-cycle persistence have not been established.
-
-The saved C files are byte-identical to the tested `/tmp/opencode/` implementation.
-This remains an experimental single-device tool, not a universal Holtek driver.
+Sensor identity, accurate physical CPI, the full DPI range, other revisions and
+power-cycle persistence remain unestablished. This is an experimental
+single-device tool, not a universal Holtek driver.
 
 ## Project goals
 
-1. Provide a reproducible C implementation of this mouse's configuration protocol
-   without the unavailable vendor driver or retail model information.
-2. Support safe, minimal current-slot DPI changes, preserving every unrelated byte.
-3. Keep discovery, protocol assumptions, test results and information sources auditable.
-4. Extend capabilities only after targeted experiments establish the relevant fields.
+1. Reproduce this mouse's configuration protocol without the vendor driver or
+   retail model information.
+2. Support safe, minimal current-slot DPI changes, preserving unrelated bytes.
+3. Keep discovery, protocol assumptions, test results and sources auditable.
+4. Extend capabilities only after targeted experiments establish the fields.
 5. Avoid firmware updates, unexplained writes, system-wide installation and services.
 
-Implemented: device/revision/descriptor checks, current profile/slot reads, profile
-download, DPI inspection and dry-run diff, guarded DPI write, backup and restricted
-restore, active-slot selection and resolution-count control (`slot`), report rate
-(`rate`) control, active-profile switching (`profile`, 0..5) and wheel direction
-toggle (`wheel`).
+Implemented: device/revision/descriptor checks, state reads, profile download,
+DPI inspection, guarded DPI write, slot selection and count (`slot`), report
+rate (`rate`), profile switching and duplication (`profile`), wheel direction
+(`wheel`), and full snapshot/restore.
 
-Not implemented: independent XY control, RGB, remapping, macros, profile copy/rename,
-firmware access, GUI, daemon, udev rule installation, or automatic support for other
-Holtek VID/PID combinations.
+Not implemented: independent XY control, RGB, remapping, macros, profile rename,
+firmware access, GUI, daemon, udev rules, or support for other Holtek VID/PIDs.
 
 ## Build and offline tests
 
 Requirements: Linux, a C11 compiler (GCC tested), libc development headers, Linux
 UAPI headers (`linux/hidraw.h`, `linux/input.h`) and GNU Make. No libusb, HIDAPI,
-Python, network access or root permission is needed to build/test.
-
-Run in this directory:
+Python, network access or root is needed to build/test.
 
 ```sh
 make
@@ -52,109 +43,64 @@ make test
 make sanitize
 ```
 
-`make sanitize` needs compiler ASan/UBSan support. Neither accesses USB. See
-[development](docs/DEVELOPMENT.md) for manual build commands, test coverage and
-failure handling.
+`make sanitize` needs ASan/UBSan support. Neither accesses USB. See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for manual builds and test coverage.
 
 ## Use
 
 Close other mouse configuration applications. Only one matching mouse may be
-connected. Root is needed on the inspected machine because hidraw is mode 0600.
-The program finds the device dynamically; do not hardcode `/dev/hidraw6`.
+connected. Root is needed because hidraw is mode 0600. The program finds the
+device dynamically; do not hardcode `/dev/hidraw6`.
 
 ```sh
-sudo ./src/main show          # 打印当前状态
-sudo ./src/main               # 无参数等价于 show
-sudo ./src/main help          # 或 -h/--help/usage/--usage
+sudo ./src/main show          # print current state
+sudo ./src/main               # no args equals show
+sudo ./src/main help          # or -h/--help/usage/--usage
 ```
 
-`show` sends query requests via SET_FEATURE and **does not write configuration**,
-activate a slot or create backups.
-
-All other subcommands write immediately (no confirmation gate) and may persist:
+`show` sends query requests and **does not write configuration**. All other
+subcommands write immediately and may persist:
 
 ```sh
-sudo ./src/main dpi 3200
+sudo ./src/main dpi 3200     # 100..6300, step 100
+sudo ./src/main slot 7       # select active slot (1..8)
+sudo ./src/main slot -c 8 7  # set count then select slot
+sudo ./src/main rate 500     # 125/250/500/1000 Hz
+sudo ./src/main profile 3    # switch active profile (0..5)
+sudo ./src/main profile -d 1 2  # copy profile 1 -> 2
+sudo ./src/main wheel        # flip scroll direction
 ```
 
-The CLI accepts multiples of 100 from 100 to 6300. The sensor is inferred to be a
-PixArt PAW33xx part with a 6-bit resolution register: raw values 0..63 map to
-0..6300 CPI, and raw >= 64 wraps modulo 64 (so 6400 acts as 0, 8000 as 1600). The
-6300 limit reflects this discovered wrap, not a proven maximum sensor rating. Only
-1200 (initial), 3200 and 1600 have direct user confirmation; the wrap is confirmed
-by the slot 6 (raw 62, fast) versus slot 7 (raw 80, slow) comparison.
+`slot SLOT` selects only; it does not auto-raise the count and reports failure
+if the firmware rejects it. `slot -c N SLOT` sets the count first when it differs.
 
-The active resolution slot can be switched, and the number of enabled slots can be
-changed. The firmware rejects selecting a slot above the configured count, so the
-count may need raising first:
-
-```sh
-sudo ./src/main slot 7
-sudo ./src/main slot --count 8 7
-sudo ./src/main slot -c 8 7
-```
-
-`slot SLOT` only selects the active slot; it does not auto-modify the count and
-reports failure if the firmware rejects it. `slot [-c|--count N] SLOT` first sets
-the resolution count to N (when it differs), then selects SLOT.
-
-The report rate can be changed with command 03, independent of the configuration
-block. Options are 125, 250, 500 and 1000 Hz:
-
-```sh
-sudo ./src/main rate 500
-```
-
-The current rate is also shown by `show`.
-
-A profile's config and button blocks can be duplicated into another profile
-(indices 0..5; source and destination must differ). The global profile-0 block is
-snapshotted and restored around the write, like other write commands:
-
-```sh
-sudo ./src/main profile -d 1 2
-sudo ./src/main profile --duplicate 1 2
-```
-
-The wheel scroll direction can be flipped with a single toggle (button block command
-0d). This also recovers from the vendor driver's inverted-scroll bug:
-
-```sh
-sudo ./src/main wheel
-```
+DPI is inferred to be a PixArt PAW33xx 6-bit resolution register: raw 0..63 map
+to 0..6300 CPI, and raw >= 64 wraps mod 64 (so 8000 acts as 1600).
 
 **Firmware-bug warning:** writing the button block can corrupt the global
-profile-0 sensor configuration on this firmware family. `wheel` prints a warning,
-snapshots profile 0, and automatically restores it if corruption is detected.
-If movement stops after `wheel`, run `restore` with a previously saved snapshot.
-
-The current wheel direction is also shown by `show`.
+profile-0 sensor configuration. `wheel` prints a warning, snapshots profile 0,
+and restores it automatically if corruption is detected. If movement stops after
+`wheel`, run `restore` with a saved snapshot.
 
 ### Snapshot and restore
-
-`snapshot` saves the full device state (all six profiles' config and button blocks)
-to a file; `restore` writes that state back. No automatic backup files are created
-by other subcommands:
 
 ```sh
 sudo ./src/main snapshot /path/to/a22a.snap
 sudo ./src/main restore /path/to/a22a.snap
 ```
 
-Snapshots carry a checksum and are validated before restore. They do not encode a
-serial number; they hold configuration only. Keep a snapshot from a known-good state
-as a recovery point before experimenting.
+`snapshot` saves all six profiles' config and button blocks; `restore` writes
+them back. Snapshots carry a checksum and are validated before restore. Keep a
+known-good snapshot (`recovery/a22a-baseline.snap`) as a recovery point.
 
 ## Safety boundaries
 
-- Writes may be persistent. There is no verified volatile-only setting command.
-- The protocol transfers a full 128-byte block even though only one byte is changed.
+- Writes may be persistent; there is no verified volatile-only command.
 - Interrupted/unsynchronized writes can leave an unknown state and may soft-brick
-  related devices. Do not unplug, stop the process, or press DPI/profile buttons.
-- Advisory locking coordinates this tool, not unrelated applications or device buttons.
-- No updater, bootloader, firmware-memory, unknown-command or password scanning exists.
+  the device. Do not unplug, stop the process, or press DPI/profile buttons.
+- The advisory lock coordinates this tool, not unrelated applications.
+- No updater, bootloader, firmware or unknown-command scanning exists.
 - No automatic backup is created; use `snapshot`/`restore` explicitly.
-- No serial number exists; the program cannot distinguish physically identical units.
 
 ## Documentation map
 
@@ -165,12 +111,12 @@ as a recovery point before experimenting.
 | [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Evidence, raw baseline blocks, successful writes, validation limits |
 | [docs/SOURCES.md](docs/SOURCES.md) | Pinned code sources, official documents, comparison and provenance |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Build/test workflow, code map, safeguards, next work |
-| [references/README.md](references/README.md) | Four complete official PDFs, retrieval URLs and SHA-256 hashes |
-| `src/main.c` | Current working driver and encoding self-tests |
+| [docs/references/README.md](docs/references/README.md) | Four official Holtek PDFs, URLs and SHA-256 hashes |
+| [recovery/a22a-baseline.snap](recovery/a22a-baseline.snap) | Baseline device snapshot for recovery |
+| `src/main.c` | Driver and encoding self-tests |
 | `test/main.c` | Offline mocked transport tests (includes `src/main.c`) |
-| `.clang-format` | GNU-based clang-format style (SortIncludes: Never) |
 | `Makefile` | Recursive build, test, sanitize and clean targets |
 
-Build output stays in `src/` and `test/`. Nothing is installed automatically. No Git repository
-or commit was created for this handoff. No project license is assigned here; upstream
-code references and Holtek PDFs retain their respective rights and license terms.
+Build output stays in `src/` and `test/`. Nothing is installed automatically. No
+project license is assigned here; upstream code references and Holtek PDFs retain
+their respective rights and license terms.

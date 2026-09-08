@@ -263,6 +263,19 @@ enum
   SCROLL_UP = 0x01,
   SCROLL_DOWN = 0x02
 };
+/* Illumination fields in the 128-byte profile block. Offsets 71..73 and
+ * 104..127 are per-profile; 16..47 are global and live only in profile 0.
+ * All are candidate (inferred from the reference driver) and not yet
+ * validated by a write experiment. */
+enum
+{
+  INDICATOR_ENABLE = 16, /* 8 bytes, profile 0 only */
+  ILLUM_COLOR = 24,      /* 8 RGB triples (24..47), profile 0 only */
+  ILLUM_MODE = 71,
+  ILLUM_INTENSITY = 72,
+  ILLUM_SPEED = 73,
+  DPI_COLOR = 104 /* 8 RGB triples (104..127), per profile */
+};
 
 static void
 scroll_set_direction (uint8_t data[BLOCK], bool natural)
@@ -583,7 +596,7 @@ static void
 print_usage (FILE *out, const char *prog)
 {
   fprintf (out,
-           "Usage:\n  %s [show]\n  %s --self-test\n"
+           "Usage:\n  %s [show [PROFILE]]\n  %s --self-test\n"
            "  %s dpi DPI\n"
            "  %s slot [-c|--count N] SLOT\n"
            "  %s rate HZ\n"
@@ -599,14 +612,62 @@ print_usage (FILE *out, const char *prog)
            prog, prog, prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
-/* Print the current device state. verbose adds the per-slot table. */
+/* Decode the illumination mode byte. The reference family lists six modes
+ * (AlwaysOff/SingleColor/MultiColor/Gyratory/WaterFlow/Custom) but A22A only
+ * observed 01/03/05, so this maps to descriptive labels rather than asserting
+ * the reference numbering. */
+static const char *
+illum_mode_name (uint8_t mode)
+{
+  switch (mode)
+    {
+    case 0x00:
+      return "off";
+    case 0x01:
+      return "steady";
+    case 0x03:
+      return "multi";
+    case 0x05:
+      return "custom";
+    default:
+      return "unknown";
+    }
+}
+
+/* Print the lighting fields of the active profile's configuration block. All
+ * values are read-only and candidate; nothing is normalized or written. */
 static void
-print_state (int fd, bool verbose)
+print_lighting (const uint8_t data[BLOCK], uint8_t profile)
+{
+  printf ("Illumination mode=%u (%s), intensity=%u, speed=%u\n",
+          data[ILLUM_MODE], illum_mode_name (data[ILLUM_MODE]),
+          data[ILLUM_INTENSITY], data[ILLUM_SPEED]);
+  if (profile == 0)
+    {
+      printf ("Profile-0 global lighting:");
+      for (unsigned s = 0; s < 8; s++)
+        printf (" %u:#%02x%02x%02x", s + 1, data[ILLUM_COLOR + s * 3],
+                data[ILLUM_COLOR + s * 3 + 1], data[ILLUM_COLOR + s * 3 + 2]);
+      printf ("\nProfile-0 DPI-indicator enable:");
+      for (unsigned s = 0; s < 8; s++)
+        printf (" %02x", data[INDICATOR_ENABLE + s]);
+      printf ("\n");
+    }
+}
+
+/* Print a profile's state. If profile_index is negative, use the active
+ * profile; otherwise read the requested profile block without switching. */
+static void
+print_state (int fd, bool verbose, int profile_index)
 {
   uint8_t profile, slot;
   uint8_t data[BLOCK], buttons[BLOCK], rate_raw;
-  if (current (fd, &profile, &slot) || read_profile (fd, profile, data))
+  if (current (fd, &profile, &slot))
     fail ("Cannot read current state.");
+  if (profile_index >= 0)
+    profile = (uint8_t)profile_index;
+  if (read_profile (fd, profile, data))
+    fail ("Cannot read profile state.");
   printf (
       "Device 04d9:a22a revision 0101; profile=%u, slot=%u (wire indices)\n",
       profile, slot);
@@ -626,6 +687,7 @@ print_state (int fd, bool verbose)
             scroll_is_natural (buttons) ? "natural" : "normal");
   else
     printf ("Wheel direction: unknown (scroll records unrecognized)\n");
+  print_lighting (data, profile);
   printf ("Sensor inferred PAW33xx 6-bit; raw>=64 wraps mod 64 (0..63 => "
           "0..6300 CPI).\n"
           "Unverified high masks X/Y=0x%02x/0x%02x; displayed DPI uses low 6 "
@@ -633,9 +695,12 @@ print_state (int fd, bool verbose)
           data[82], data[83]);
   if (verbose)
     for (unsigned s = 1; s <= 8; s++)
-      printf ("slot %u: X=%u (~%u DPI), Y=%u, enabled-by-count-and-mask=%s\n",
+      printf ("slot %u: X=%u (~%u DPI), Y=%u, #%02x%02x%02x, "
+              "enabled-by-count-and-mask=%s\n",
               s, raw_dpi (data, s, false), raw_dpi (data, s, false) * 100,
-              raw_dpi (data, s, true),
+              raw_dpi (data, s, true), data[DPI_COLOR + (s - 1) * 3],
+              data[DPI_COLOR + (s - 1) * 3 + 1],
+              data[DPI_COLOR + (s - 1) * 3 + 2],
               s <= data[70] && (data[100] & (1u << (s - 1))) ? "yes" : "no");
 }
 
@@ -654,6 +719,7 @@ main (int argc, char **argv)
       return 0;
     }
   bool show = argc == 1 || (argc == 2 && !strcmp (argv[1], "show"));
+  bool show_profile = argc == 3 && !strcmp (argv[1], "show");
   bool set_dpi = argc == 3 && !strcmp (argv[1], "dpi");
   bool snapshot = argc == 3 && !strcmp (argv[1], "snapshot");
   bool restore = argc == 3 && !strcmp (argv[1], "restore");
@@ -667,11 +733,22 @@ main (int argc, char **argv)
   bool profile_dup
       = argc == 5 && !strcmp (argv[1], "profile")
         && (!strcmp (argv[2], "-d") || !strcmp (argv[2], "--duplicate"));
-  if (!show && !set_dpi && !snapshot && !restore && !flip_wheel && !set_rate
-      && !slot_cmd && !slot_count && !profile_cmd && !profile_dup)
+  if (!show && !show_profile && !set_dpi && !snapshot && !restore
+      && !flip_wheel && !set_rate && !slot_cmd && !slot_count && !profile_cmd
+      && !profile_dup)
     {
       print_usage (stderr, argv[0]);
       return 2;
+    }
+  int show_index = -1;
+  if (show_profile)
+    {
+      char *end;
+      errno = 0;
+      unsigned long value = strtoul (argv[2], &end, 10);
+      if (errno || end == argv[2] || *end || value >= PROFILES)
+        fail ("Profile must be 0..5; device not opened.");
+      show_index = (int)value;
     }
   unsigned dpi = 0;
   if (set_dpi)
@@ -748,9 +825,9 @@ main (int argc, char **argv)
   uint8_t profile, slot, original[BLOCK], target[BLOCK];
   if (current (fd, &profile, &slot) || read_profile (fd, profile, original))
     fail ("Cannot read current state; no configuration write attempted.");
-  if (show)
+  if (show || show_profile)
     {
-      print_state (fd, true);
+      print_state (fd, true, show_index);
       close (fd);
       return 0;
     }
@@ -769,7 +846,7 @@ main (int argc, char **argv)
           "Active profile changed to %u.\n"
           "Applied via command 02; no configuration block was rewritten.\n",
           target_profile);
-      print_state (fd, true);
+      print_state (fd, true, -1);
       close (fd);
       return 0;
     }
@@ -793,7 +870,7 @@ main (int argc, char **argv)
         fail ("GLOBAL RESTORE FAILED; profile 0 may remain corrupted.");
       printf ("Copied profile %u config+buttons to profile %u.\n", copy_src,
               copy_dst);
-      print_state (fd, true);
+      print_state (fd, true, -1);
       close (fd);
       return 0;
     }
@@ -822,7 +899,7 @@ main (int argc, char **argv)
         {
           printf ("Slot %u already active; no selection write performed.\n",
                   slot);
-          print_state (fd, true);
+          print_state (fd, true, -1);
           close (fd);
           return 0;
         }
@@ -837,7 +914,7 @@ main (int argc, char **argv)
               target_slot, raw_dpi (original, target_slot, false),
               raw_dpi (original, target_slot, false) * 100,
               raw_dpi (original, target_slot, true));
-      print_state (fd, true);
+      print_state (fd, true, -1);
       close (fd);
       return 0;
     }
@@ -865,7 +942,7 @@ main (int argc, char **argv)
           "Report rate set to %u Hz (raw 0x%02x), profile %u.\n"
           "Applied via command 03; no configuration block was rewritten.\n",
           target_hz, raw, profile);
-      print_state (fd, true);
+      print_state (fd, true, -1);
       close (fd);
       return 0;
     }
@@ -912,7 +989,7 @@ main (int argc, char **argv)
       printf ("Wheel direction flipped: was %s, now %s (records 14/15: "
               "up/down events).\n",
               natural ? "normal" : "natural", natural ? "natural" : "normal");
-      print_state (fd, true);
+      print_state (fd, true, -1);
       close (fd);
       return 0;
     }
@@ -961,7 +1038,7 @@ main (int argc, char **argv)
   if (!memcmp (original, target, BLOCK))
     {
       puts ("Already set; no configuration write, or activation needed.");
-      print_state (fd, true);
+      print_state (fd, true, -1);
       close (fd);
       return 0;
     }
@@ -970,7 +1047,7 @@ main (int argc, char **argv)
           "Physical sensitivity and persistence across power cycles are not "
           "measured.\n",
           raw_dpi (target, slot, false) * 100);
-  print_state (fd, true);
+  print_state (fd, true, -1);
   close (fd);
   return 0;
 }

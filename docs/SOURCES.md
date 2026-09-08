@@ -72,13 +72,13 @@ document in the searches performed. This is a search result, not proof none exis
 
 | Local document | Version/date | Relevance and limitations |
 | --- | --- | --- |
-| [HT68FB540/550/560](../references/HT68FB540_550_560v200.pdf) | 2.00, 2023-05-16 | 8-bit Holtek RISC architecture, USB, SPI, memory, programming interfaces; B candidate family |
-| [AN0699EN](../references/an0699en.pdf) | 1.00, 2025-01-10 | HT68FB550 mouse reference firmware, descriptors, endpoint handling and firmware flow |
-| [HT68FB541/571](../references/HT68FB541_571v140.pdf) | 1.40, 2021-09-10 | Endpoint hardware limits and comparison to output-only variants |
-| [AN0483E](../references/an0483e.pdf) | 1.00, 2018-03-09 | HT66FB574/572 color-effect mouse, RGB, sensor, host-app/firmware architecture |
+| [HT68FB540/550/560](references/HT68FB540_550_560v200.pdf) | 2.00, 2023-05-16 | 8-bit Holtek RISC architecture, USB, SPI, memory, programming interfaces; B candidate family |
+| [AN0699EN](references/an0699en.pdf) | 1.00, 2025-01-10 | HT68FB550 mouse reference firmware, descriptors, endpoint handling and firmware flow |
+| [HT68FB541/571](references/HT68FB541_571v140.pdf) | 1.40, 2021-09-10 | Endpoint hardware limits and comparison to output-only variants |
+| [AN0483E](references/an0483e.pdf) | 1.00, 2018-03-09 | HT66FB574/572 color-effect mouse, RGB, sensor, host-app/firmware architecture |
 
 Exact original URLs, byte sizes, page counts, download date and SHA-256 digests are
-in [references/README.md](../references/README.md). They are official copyrighted
+in [references/README.md](references/README.md). They are official copyrighted
 references, not this project's own firmware or documentation license.
 
 HT68FB550/560 are Holtek 8-bit RISC devices, not automatically ARM or 8051 targets.
