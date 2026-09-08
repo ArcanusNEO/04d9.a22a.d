@@ -1,39 +1,16 @@
-CC ?= cc
-GCC ?= gcc
-CPPFLAGS ?=
-CFLAGS ?= -O2
-LDFLAGS ?=
-LDLIBS ?=
+MAKEFLAGS += -r
+.PHONY: all clean test sanitize
 
-WARNFLAGS = -std=c11 -Wall -Wextra -Wpedantic -Werror
-SANFLAGS = -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+all:
+	$(MAKE) -C src -- all
 
-.PHONY: all test sanitize analyze clean
+test: all
+	$(CURDIR)/src/main --self-test
+	$(MAKE) -C test -- all
 
-all: build/main
-
-build:
-	mkdir -p $@
-
-build/main: main.c Makefile | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) $(LDFLAGS) -o $@ $< $(LDLIBS)
-
-build/main-test: main-test.c main.c Makefile | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) $(LDFLAGS) -o $@ $< $(LDLIBS)
-
-test: build/main build/main-test
-	./build/main --self-test
-	./build/main-test
-
-build/main-test-sanitize: main-test.c main.c Makefile | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) $(LDFLAGS) $(SANFLAGS) -o $@ $< $(LDLIBS)
-
-sanitize: build/main-test-sanitize
-	./build/main-test-sanitize
-
-analyze:
-	$(GCC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -fanalyzer -c main.c -o /dev/null
-	$(GCC) $(CPPFLAGS) $(CFLAGS) $(WARNFLAGS) -fanalyzer -c main-test.c -o /dev/null
+sanitize: all
+	$(MAKE) -C test -- sanitize
 
 clean:
-	$(RM) -r build
+	$(MAKE) -C src -- clean
+	$(MAKE) -C test -- clean

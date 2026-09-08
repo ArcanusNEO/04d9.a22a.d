@@ -4,7 +4,7 @@
 #define read mock_read
 #define poll mock_poll
 #define main utility_main
-#include "main.c"
+#include "../src/main.c"
 #undef main
 #undef poll
 #undef read

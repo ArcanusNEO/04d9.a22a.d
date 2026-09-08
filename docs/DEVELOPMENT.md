@@ -17,13 +17,13 @@ Source is formatted with clang-format using the project `.clang-format`
 (`BasedOnStyle: GNU`, `SortIncludes: Never`). Format before committing:
 
 ```sh
-clang-format -i main.c main-test.c
-clang-format --dry-run --Werror main.c main-test.c
+clang-format -i src/main.c test/main.c
+clang-format --dry-run --Werror src/main.c test/main.c
 ```
 
 Conventions:
 
-- C11, `-std=c11 -Wall -Wextra -Wpedantic -Werror` must stay warning-clean.
+- C11, built with `-Wall -Wvla -Wno-parentheses` and kept warning-clean.
 - Static helper functions per protocol stage; no public library ABI yet.
 - Explicit magic/checksum fields in binary formats, not compiler-dependent structs.
 - No hardcoded device-specific values; read configuration at runtime so the tool
@@ -38,21 +38,22 @@ Run these from the project root:
 make
 make test
 make sanitize
-make analyze
 ```
 
 | Target | Action | Hardware access |
 | --- | --- | --- |
-| all (default) | Build build/main | None |
+| all (default) | Build src/main | None |
 | test | Build/run encoder self-test and mocked transport executable | None |
 | sanitize | Separate mocked executable with ASan and UBSan | None |
-| analyze | GCC -fanalyzer on both sources, output to /dev/null | None |
-| clean | Remove build/ only | None |
+| clean | Remove src/ and test/ artifacts only | None |
 
-Strict flags: `-std=c11 -Wall -Wextra -Wpedantic -Werror`. `CC`, `GCC`, `CPPFLAGS`,
-`CFLAGS`, `LDFLAGS`, and `LDLIBS` are overridable. GCC is used for the analyzer
-even if another compiler is selected for normal builds. GNU Make's built-in CC
-normally resolves to cc; set `CC=gcc` explicitly if desired.
+The build is a recursive Make (libcaster-style): the top-level Makefile delegates
+to `src/Makefile` and `test/Makefile`, each using `MAKEFLAGS += -r`, `.SUFFIXES`,
+automatic `.d` dependency files and `-include $(DEP)`. Flags are `-O3 -fno-plt
+-pipe -D_GNU_SOURCE=1 -fwrapv -fms-extensions -Wall -Wvla -Wno-parentheses`;
+`CC`, `CPPFLAGS`, `CFLAGS`, `LDFLAGS` and `LDLIBS` are overridable. `LDLIBS`
+links `-lm`. GCC is not required; GNU Make's built-in `CC` normally resolves to
+`cc`.
 
 ```sh
 make clean
@@ -67,8 +68,8 @@ No install target is provided; run the built executable directly.
 Manual build, if Make is unavailable:
 
 ```sh
-cc -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror main.c -o /tmp/main-manual
-cc -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror main-test.c -o /tmp/main-test-manual
+cc -O3 -fno-plt -pipe -D_GNU_SOURCE=1 -fwrapv -fms-extensions -Wall -Wvla -Wno-parentheses src/main.c -o /tmp/main-manual
+cc -O3 -fno-plt -pipe -D_GNU_SOURCE=1 -fwrapv -fms-extensions -Wall -Wvla -Wno-parentheses -Isrc test/main.c -o /tmp/main-test-manual
 /tmp/main-manual --self-test
 /tmp/main-test-manual
 ```
@@ -94,7 +95,7 @@ those paths already contain something important. Never run builds as root.
 | print_usage / print_state | Usage text and post-change state reporting |
 | main | CLI dispatch, layout guards, dry run, no-op, preflight, wheel bug mitigation |
 | self_test | Pure packet, encoding/preservation and snapshot tests |
-| main-test.c | Includes implementation under mocked syscall names; never opens a device |
+| test/main.c | Includes src/main.c under mocked syscall names; never opens a device |
 
 Small static functions keep protocol stages understandable without introducing a
 public library ABI before a second user exists. Preserve the minimal single-slot
@@ -130,7 +131,7 @@ Sanitizers and mocks do not establish firmware safety.
 Read-only-at-the-configuration-level checks:
 
 ```sh
-sudo ./build/main show
+sudo ./src/main show
 ```
 
 Expected last accepted state: profile 1, slot 1, X low=16 (~1600), Y low=20,
