@@ -4,7 +4,6 @@
 #include <glob.h>
 #include <linux/hidraw.h>
 #include <linux/input.h>
-#include <limits.h>
 #include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -1082,14 +1081,6 @@ main (int argc, char **argv)
     }
   if (led_mode || led_brightness || led_speed)
     {
-      uint8_t snap[SNAP_SIZE];
-      if (read_snapshot (fd, snap))
-        fail ("Cannot read full device snapshot.");
-      char archive[PATH_MAX];
-      snprintf (archive, sizeof (archive), "a22a-pre-light-%ld.snap",
-                (long)time (NULL));
-      save_snapshot (snap, archive);
-      fprintf (stderr, "Archived pre-write snapshot to %s\n", archive);
       memcpy (target, original, BLOCK);
       if (led_mode)
         target[ILLUM_MODE] = (uint8_t)led_mode_value;
