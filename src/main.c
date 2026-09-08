@@ -598,7 +598,8 @@ print_usage (FILE *out, const char *prog)
   fprintf (out,
            "Usage:\n  %s [show [PROFILE]]\n  %s --self-test\n"
            "  %s dpi DPI\n"
-           "  %s slot [-c|--count N] SLOT\n"
+           "  %s slot [-c|--count] SLOT\n"
+           "  %s count N\n"
            "  %s rate HZ\n"
            "  %s profile [-d|--duplicate SRC] DST\n"
            "  %s wheel\n"
@@ -614,7 +615,7 @@ print_usage (FILE *out, const char *prog)
            "Writes are immediate and may persist. Close vendor software; do "
            "not unplug.\n",
            prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
-           prog, prog);
+           prog, prog, prog);
 }
 
 /* Decode the illumination mode byte. Probe results on A22A: the low two bits
@@ -758,8 +759,9 @@ main (int argc, char **argv)
   bool set_rate = argc == 3 && !strcmp (argv[1], "rate");
   bool slot_cmd = argc == 3 && !strcmp (argv[1], "slot");
   bool slot_count
-      = argc == 5 && !strcmp (argv[1], "slot")
+      = argc == 4 && !strcmp (argv[1], "slot")
         && (!strcmp (argv[2], "-c") || !strcmp (argv[2], "--count"));
+  bool set_count = argc == 3 && !strcmp (argv[1], "count");
   bool profile_cmd = argc == 3 && !strcmp (argv[1], "profile");
   bool profile_dup
       = argc == 5 && !strcmp (argv[1], "profile")
@@ -771,8 +773,9 @@ main (int argc, char **argv)
   bool led_speed
       = argc == 4 && !strcmp (argv[1], "led") && !strcmp (argv[2], "speed");
   if (!show && !show_profile && !set_dpi && !snapshot && !restore
-      && !flip_wheel && !set_rate && !slot_cmd && !slot_count && !profile_cmd
-      && !profile_dup && !led_mode && !led_brightness && !led_speed)
+      && !flip_wheel && !set_rate && !slot_cmd && !slot_count && !set_count
+      && !profile_cmd && !profile_dup && !led_mode && !led_brightness
+      && !led_speed)
     {
       print_usage (stderr, argv[0]);
       return 2;
@@ -802,7 +805,7 @@ main (int argc, char **argv)
   unsigned target_slot = 0;
   if (slot_cmd || slot_count)
     {
-      const char *slot_arg = slot_count ? argv[4] : argv[2];
+      const char *slot_arg = slot_count ? argv[3] : argv[2];
       char *end;
       errno = 0;
       unsigned long value = strtoul (slot_arg, &end, 10);
@@ -811,12 +814,12 @@ main (int argc, char **argv)
       target_slot = (unsigned)value;
     }
   unsigned target_count = 0;
-  if (slot_count)
+  if (set_count)
     {
       char *end;
       errno = 0;
-      unsigned long value = strtoul (argv[3], &end, 10);
-      if (errno || end == argv[3] || *end || value < 1 || value > 8)
+      unsigned long value = strtoul (argv[2], &end, 10);
+      if (errno || end == argv[2] || *end || value < 1 || value > 8)
         fail ("Count must be 1..8; device not opened.");
       target_count = (unsigned)value;
     }
@@ -925,7 +928,25 @@ main (int argc, char **argv)
       close (fd);
       return 0;
     }
-  if (slot_count)
+  if (slot_count && target_slot > original[70])
+    {
+      if (original[74] != 100 || original[75] != 100)
+        fail ("State outside inspected DPI layout; nothing written.");
+      target_count = target_slot;
+      memcpy (target, original, BLOCK);
+      target[70] = (uint8_t)target_count;
+      if (memcmp (original, target, BLOCK) != 0)
+        {
+          commit_profile (fd, profile, slot, original, target);
+          printf ("Resolution count raised to %u (offset 70) before switch.\n"
+                  "Active slot %u was reselected after the write.\n",
+                  target_count, slot);
+        }
+      else
+        printf ("Count already %u; no count write performed.\n",
+                target_count);
+    }
+  if (set_count)
     {
       if (original[74] != 100 || original[75] != 100)
         fail ("State outside inspected DPI layout; nothing written.");
@@ -947,24 +968,40 @@ main (int argc, char **argv)
   if (slot_cmd || slot_count)
     {
       if (target_slot == slot)
+        printf ("Slot %u already active; no selection write performed.\n",
+                slot);
+      else
         {
-          printf ("Slot %u already active; no selection write performed.\n",
-                  slot);
-          print_state (fd, true, -1);
-          close (fd);
-          return 0;
+          uint8_t check_profile, check_slot;
+          if (send_command (fd, 0x04, profile, (uint8_t)target_slot)
+              || current (fd, &check_profile, &check_slot)
+              || check_profile != profile || check_slot != target_slot)
+            fail ("Slot selection unverified; firmware may have rejected it "
+                  "(e.g. count too low).");
+          printf ("Active slot changed to %u (wire index). X low=%u (~%u DPI), "
+                  "Y low=%u.\n",
+                  target_slot, raw_dpi (original, target_slot, false),
+                  raw_dpi (original, target_slot, false) * 100,
+                  raw_dpi (original, target_slot, true));
         }
-      uint8_t check_profile, check_slot;
-      if (send_command (fd, 0x04, profile, (uint8_t)target_slot)
-          || current (fd, &check_profile, &check_slot)
-          || check_profile != profile || check_slot != target_slot)
-        fail ("Slot selection unverified; firmware may have rejected it (e.g. "
-              "count too low).");
-      printf ("Active slot changed to %u (wire index). X low=%u (~%u DPI), Y "
-              "low=%u.\n",
-              target_slot, raw_dpi (original, target_slot, false),
-              raw_dpi (original, target_slot, false) * 100,
-              raw_dpi (original, target_slot, true));
+      if (slot_count && target_slot < original[70])
+        {
+          if (original[74] != 100 || original[75] != 100)
+            fail ("State outside inspected DPI layout; nothing written.");
+          target_count = target_slot;
+          memcpy (target, original, BLOCK);
+          target[70] = (uint8_t)target_count;
+          if (memcmp (original, target, BLOCK) != 0)
+            {
+              commit_profile (fd, profile, target_slot, original, target);
+              printf ("Resolution count lowered to %u (offset 70) after "
+                      "switch.\n",
+                      target_count);
+            }
+          else
+            printf ("Count already %u; no count write performed.\n",
+                    target_count);
+        }
       print_state (fd, true, -1);
       close (fd);
       return 0;
