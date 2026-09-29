@@ -22,6 +22,12 @@ which device fields are understood. Protocol details, offsets and evidence are i
 The wheel firmware-bug mitigation (snapshot profile 0 before the 0d write, restore
 if corrupted) is part of `wheel` and is verified to recover tracking after the bug.
 
+## Broken command
+
+| CLI | Status | Reason |
+| --- | --- | --- |
+| `led mode MODE`, `led brightness 0..255`, `led speed 0..255` | Broken; do not use | Illumination fields and their encodings have not been fully reverse-engineered or verified. |
+
 ## Not implemented
 
 | Feature | Reference command/field | Why not / next step |
@@ -30,7 +36,7 @@ if corrupted) is part of `wheel` and is verified to recover tracking after the b
 | Macro recording | 0f / 8f | Reference labels 0f (and 0f with ARG0>50) dangerous. Not attempted. |
 | Independent XY DPI | — | No device-side switch found; reference is static sensor metadata. |
 | DPI indicator LED colors | profile 104..127 | Layout known; needs vendor-software capture to confirm encoding. |
-| Illumination mode/intensity/speed | profile 71/72/73 + 24..47 | Layout candidate; needs capture to confirm encoding. |
+| Illumination mode/intensity/speed fields | profile 71/72/73 + 24..47 | Layout candidate; needs capture to confirm encoding. The `led` CLI is documented above as broken until then. |
 | Button debounce | profile 103 | Candidate field; encoding unverified. |
 | enabled_rates / enabled_resolutions bitmaps | profile 64 / 100 | Candidate bitmasks; modifying behavior unverified. |
 | Enable/disable individual profiles | profile 0 offset 2 | Field proven unstable across profile switches. |

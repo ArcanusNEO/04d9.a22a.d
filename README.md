@@ -31,6 +31,10 @@ rate (`rate`), profile switching and duplication (`profile`), wheel direction
 Not implemented: independent XY control, RGB, remapping, macros, profile rename,
 firmware access, GUI, daemon, udev rules, or support for other Holtek VID/PIDs.
 
+**Broken command:** `led mode`, `led brightness`, and `led speed` are not usable
+yet. The illumination fields have not been fully reverse-engineered, so their
+values and behavior are unverified. See [docs/STATUS.md](docs/STATUS.md).
+
 ## Build and offline tests
 
 Requirements: Linux, a C11 compiler (GCC tested), libc development headers, Linux
