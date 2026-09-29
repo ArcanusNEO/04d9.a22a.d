@@ -203,19 +203,18 @@ reliable interpretation yet.
 | 6..7 | 2 | sensor fw size | candidate | Little endian; profile 0 = `fe 0f` (4094) |
 | 8..15 | 8 | password | candidate | Not used for local API B transport |
 | 16..23 | 8 | DPI indicator enable | candidate | Per-DPI indicator LED enable |
-| 24..47 | 24 | illumination RGB | candidate | Eight RGB entries (3 bytes each) |
+| 24..47 | 24 | illumination RGB | candidate | OEM profile-0 writer stores eight RGB triples; hardware behavior unverified |
 | 48..63 | 16 | sensor reg config | candidate | Eight register/value pairs; profile 1..5 = `2e 10 42 00 00...`; NDA |
 | 64 | 1 | enabled rates | candidate | Bitmask; observed `8f` (high bits uninterpreted) |
 | 65..69 | 5 | (padding) | unknown | |
 | 70 | 1 | resolution count | **known** | Number of active slots; writable via `slot -c` |
-| 71 | 1 | illumination mode | candidate | |
-| 72 | 1 | illumination intensity | candidate | |
-| 73 | 1 | illumination speed | candidate | |
-| 74..75 | 2 | X/Y scale | candidate | Both 100 decimal; guard for DPI writes |
-| 76..81 | 6 | (padding) | unknown | No confirmed XY-mode flag |
+| 71 | 1 | illumination mode | candidate | OEM writer stores zero-based mode index 0..11; hardware effect unverified |
+| 72..73 | 2 | illumination parameters | candidate | OEM encoding is mode-dependent; see [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md) |
+| 74..75 | 2 | X/Y scale | candidate | OEM UI writer maps X/Y scale controls here; both were 100 on inspected state; physical effect unverified |
+| 76..81 | 6 | (padding) | unknown | No confirmed XY-mode flag; OEM Sync mirrors scale values in host-side profile data |
 | 82..83 | 2 | X/Y high-bit masks | candidate | Ninth DPI bit per slot; observed `20 20` (slot 6 only) |
-| 84..91 | 8 | X DPI table | **known** | Low byte = DPI/100, 6-bit; slot 1 at 84 writable |
-| 92..99 | 8 | Y DPI table | candidate | Preserved untouched; shared-X assumed |
+| 84..91 | 8 | X DPI table | **known for tested low values** | Slots 1..3 were written using `DPI/100`; OEM Sensor=3327 code has a distinct high-range mapping |
+| 92..99 | 8 | Y DPI table | candidate | Preserved untouched; no separate per-stage Y control in the OEM UI |
 | 100 | 1 | enabled resolutions | candidate | Bitmask; observed `ff` |
 | 101..102 | 2 | (padding) | unknown | |
 | 103 | 1 | debounce | candidate | Milliseconds; observed 20 (0x14) |
@@ -232,40 +231,44 @@ profiles; see [EXPERIMENTS.md](EXPERIMENTS.md).
 
 ### DPI encoding and limits
 
-For the tested slot/configuration, `X low byte = DPI / 100`: 0c=1200, 20=3200,
-10=1600. The writes and user feedback support using X as the shared setting.
-No verified dynamic shared/independent XY switch was found. The public driver's
-`independent_xy` comes from host-side sensor metadata, not a mode bit it reads.
+For tested low settings, `X low byte = DPI / 100`: 0c=1200, 20=3200,
+10=1600. Those writes changed only the selected stage's X byte and preserved the
+rest of the block. They do not establish the encoding at and above the OEM sensor
+branch threshold. The current CLI writes X stage values only. The OEM's separate
+X/Y controls are scale values stored at profile bytes 74/75; its Sync checkbox
+copies X to Y when enabled, then mirrors either slider while enabled, rather than
+setting a device mode bit. The physical effect of these scale values is not yet
+hardware-verified. See [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md).
 
-The sensor is inferred to be a PixArt PAW33xx part (PAW3333 family, see
-[SOURCES.md](SOURCES.md) S6). It exposes a **6-bit resolution register**, so only
-raw 0..63 map monotonically to 0..6300 CPI. Raw values 64..255 wrap modulo 64:
+The earlier PAW3333 and modulo-64 interpretation is superseded by the A22A
+installer evidence `Data.ini: Sensor=3327` (SOURCES.md S7). The Windows program
+uses this sensor code (`0x0cff`) to select a sensor-specific DPI conversion in
+`MouseDriver.exe`:
 
-| raw | raw mod 64 | effective CPI |
-| ---: | ---: | ---: |
-| 12 | 12 | 1200 |
-| 16 | 16 | 1600 |
-| 32 | 32 | 3200 |
-| 62 | 62 | 6200 (fast) |
-| 63 | 63 | 6300 |
-| 64 | 0 | 0 (minimum; feels very slow) |
-| 80 | 16 | 1600 |
+| Logical stage `n` | OEM 3327 X-table byte emitted by the Windows writer |
+| ---: | ---: |
+| 1 | `02` |
+| 2..62 | `n` unchanged |
+| 63..124 | `floor(n / 2) \| 0x40` (bit 6 marks the high range) |
 
-This empirically explains every observed anomaly: 6400 (raw 64) became the slowest,
-8000 (raw 80) behaved like 1600, and "6 is faster than 7" (raw 62 > raw 80). It is
-consistent with the firmware passing the low six bits of the host value to the sensor.
+The same Windows UI sets a maximum of 12400 and slider maximum 124 for this
+sensor. This proves the vendor application's **write-side encoding**, not the
+attached sensor's calibrated response or the firmware's readback decoder.
+Other sensor codes in the executable use different thresholds/marker bits.
 
-The CLI therefore accepts `dpi` values from 100..6300 by 100, writes only
-`84 + slot - 1`, and preserves both candidate high masks. If the selected X
-high-mask bit is set, writes are refused. Displayed values apply the six-bit mask,
-including untested/inactive slots, so a stored 224 (raw 224) is reported as
-224 & 63 = 32, i.e. 3200 CPI, not 22400. Count and enable mask are displayed using
-the reference interpretation but never normalized/written.
+The Linux `edit_dpi` now uses the OEM Sensor=3327 write mapping; `decode_dpi`
+interprets bit 6 as the doubled range and reports the resulting CPI as an
+estimate. For example, raw `68` estimates 8000 CPI and raw `5f` estimates 6200
+CPI, so a requested logical 6300 (n=63) is encoded as `5f` and quantizes down
+to the 6200 code. Odd logical stages in the extended range collide with the
+preceding even stage because the OEM encoder uses integer division. The
+physical CPI and readback interpretation have not been calibrated on this
+mouse.
 
-Restore may reinstate a backed-up low-byte value outside the `dpi` command's range
-(it also re-applies the six-bit mask for display). It still requires the inspected
-scales, compatible layout and clear selected X high-mask bit, and permits no
-unrelated byte differences.
+The CLI accepts `dpi` values from 200..12400 by 100, writes only
+`84 + slot - 1`, and preserves both candidate high masks. It refuses writes to a
+slot whose candidate X high-mask bit is set. Unrelated bytes are preserved; the
+display is an encoding estimate, not a physical measurement.
 
 ### Button records
 
@@ -327,8 +330,10 @@ now a supported, reversible setting.
 
 ## Snapshot format
 
-The `snapshot`/`restore` commands use a full-device snapshot, replacing the earlier
-per-profile backup files. Layout is explicit, not an ABI-dependent C struct:
+The `snapshot`/`restore` commands store all six profiles' config and button
+blocks, replacing the earlier per-profile backup files. Version 1 does not
+include standalone report rates or active profile/slot, so it is not a complete
+runtime-state image. Layout is explicit, not an ABI-dependent C struct:
 
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |

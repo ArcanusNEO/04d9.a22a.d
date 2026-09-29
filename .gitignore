@@ -6,6 +6,8 @@
 !*.md
 !docs
 !docs/**
+!vendor
+!vendor/**
 !recovery
 !recovery/**
 

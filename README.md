@@ -8,11 +8,15 @@ hidraw interface; it is **not** a kernel module or a replacement input driver.
 
 As of 2026-09-07, current-slot DPI writes **1200 -> 3200 -> 1600** succeeded on
 the connected mouse, with full profile readback before and after slot activation.
-The last retained setting is **1600 DPI, profile 1, slot 1** (wire indices).
+That was the last state recorded at the time. A read-only observation on
+2026-09-29 reports profile 1 / slot 1, X raw `0x18` (Sensor=3327 estimate 2400
+CPI), Y raw `0x14`, and 250 Hz. This estimate is not a physical calibration.
 
-Sensor identity, accurate physical CPI, the full DPI range, other revisions and
-power-cycle persistence remain unestablished. This is an experimental
-single-device tool, not a universal Holtek driver.
+The fitted sensor identity, accurate physical CPI, the effective maximum, other
+revisions and power-cycle persistence remain unestablished. The CLI uses the
+OEM Sensor=3327 write encoding, but only the low 1200/1600/3200 settings have
+hardware write/readback evidence. This is an experimental single-device tool,
+not a universal Holtek driver.
 
 ## Project goals
 
@@ -28,7 +32,7 @@ DPI inspection, guarded DPI write, slot selection and count (`slot`), report
 rate (`rate`), profile switching and duplication (`profile`), wheel direction
 (`wheel`), and full snapshot/restore.
 
-Not implemented: independent XY control, RGB, remapping, macros, profile rename,
+Not implemented: X/Y scale controls, RGB, remapping, macros, profile rename,
 firmware access, GUI, daemon, udev rules, or support for other Holtek VID/PIDs.
 
 **Broken command:** `led mode`, `led brightness`, and `led speed` are not usable
@@ -66,7 +70,7 @@ sudo ./src/main help          # or -h/--help/usage/--usage
 subcommands write immediately and may persist:
 
 ```sh
-sudo ./src/main dpi 3200     # 100..6300, step 100
+sudo ./src/main dpi 3200     # 200..12400, step 100; Sensor=3327 encoding
 sudo ./src/main slot 7       # select active slot (1..8)
 sudo ./src/main slot -c 8 7  # set count then select slot
 sudo ./src/main rate 500     # 125/250/500/1000 Hz
@@ -78,8 +82,16 @@ sudo ./src/main wheel        # flip scroll direction
 `slot SLOT` selects only; it does not auto-raise the count and reports failure
 if the firmware rejects it. `slot -c N SLOT` sets the count first when it differs.
 
-DPI is inferred to be a PixArt PAW33xx 6-bit resolution register: raw 0..63 map
-to 0..6300 CPI, and raw >= 64 wraps mod 64 (so 8000 acts as 1600).
+The CLI uses the OEM Sensor=3327 stage encoder for 200..12400. High-range odd
+steps can map to the preceding 200-CPI code value; the reported number is an
+encoding estimate, not calibrated CPI. Hardware writes are confirmed only for
+1200, 1600 and 3200.
+
+The tested 1200/1600/3200 settings follow 100-CPI steps. The high-range encoding
+now follows the OEM writer, but physical CPI and the effective maximum remain
+unverified. The OEM Windows package declares `Sensor=3327`, superseding the
+earlier PAW3333/modulo-64 inference. See
+[docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md).
 
 **Firmware-bug warning:** writing the button block can corrupt the global
 profile-0 sensor configuration. `wheel` prints a warning, snapshots profile 0,
@@ -93,9 +105,11 @@ sudo ./src/main snapshot /path/to/a22a.snap
 sudo ./src/main restore /path/to/a22a.snap
 ```
 
-`snapshot` saves all six profiles' config and button blocks; `restore` writes
-them back. Snapshots carry a checksum and are validated before restore. Keep a
-known-good snapshot (`recovery/a22a-baseline.snap`) as a recovery point.
+`snapshot` saves all six profiles' config and button blocks; it does not capture
+report rates or the active profile/slot. Snapshots carry a checksum and are
+validated before restore. The owner has verified a normal restore on the attached
+mouse; partial-transfer/error recovery still needs validation. Keep a known-good
+snapshot (`recovery/a22a-baseline.snap`) as a recovery point.
 
 ## Safety boundaries
 
@@ -113,6 +127,9 @@ known-good snapshot (`recovery/a22a-baseline.snap`) as a recovery point.
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | Identity, descriptors, transport, commands, fields, backup layout |
 | [docs/STATUS.md](docs/STATUS.md) | Implemented/not-implemented features and field understanding |
 | [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Evidence, raw baseline blocks, successful writes, validation limits |
+| [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md) | OEM Windows installer extraction, HID DLL findings and conflicting sensor metadata |
+| [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | Windows/Linux capability comparison, confirmed gaps and staged completion plan |
+| [vendor/IE3.0+A3327_setup.exe](vendor/IE3.0+A3327_setup.exe) | Checked-in original Windows setup package used for static analysis |
 | [docs/SOURCES.md](docs/SOURCES.md) | Pinned code sources, official documents, comparison and provenance |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Build/test workflow, code map, safeguards, next work |
 | [docs/references/README.md](docs/references/README.md) | Four official Holtek PDFs, URLs and SHA-256 hashes |

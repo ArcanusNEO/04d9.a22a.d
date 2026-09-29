@@ -103,15 +103,16 @@ scope rather than turning this into a generic arbitrary-command sender.
 
 ## Test coverage and gaps
 
-Self-tests check checksum examples, eight slots across all positive eight-bit raw
-values, preservation of all unrelated bytes, snapshot roundtrip and detection of a
-single-bit corruption in each snapshot byte. The broad offline encoding sweep is
-not permission to write all those values to hardware; the `dpi` subcommand retains
-its 100..6300 guardrail.
+Self-tests check checksum examples, eight slots across the Sensor=3327 DPI
+encoder range, preservation of all unrelated bytes, snapshot roundtrip and
+detection of a single-bit corruption in each snapshot byte. The broad offline
+encoding sweep does not establish physical high-range CPI; those values remain
+uncalibrated on hardware.
 
 Pure-logic tests additionally cover the rate code map, wheel direction
-normal/natural byte encoding, and the 6-bit DPI wrap boundary (64->0, 80->16,
-255->63).
+normal/natural byte encoding, Sensor=3327 low/high-range encoding and estimated
+decode. The OEM high-range path is implemented; physical CPI remains unverified.
+See [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md).
 
 Mocked transport tests cover exact two-chunk success, remaining-count synchronization,
 invalid read/write acknowledgements, partial output/input, input timeout and stale
@@ -119,12 +120,14 @@ queued data. Mock calls replace ioctl, read, write and poll at compilation time.
 
 ASan/UBSan passed for the saved code. Hardware evidence includes
 successful `show`, reads and two actual DPI changes with full readback and owner
-confirmation. The snapshot/restore roundtrip was verified against the live device, and a baseline
-snapshot (`recovery/a22a-baseline.snap`) is committed as a recovery point.
+confirmation. The owner has also confirmed a successful restore on the attached
+device. Partial-transfer and interrupted-restore behavior remain untested. A
+baseline snapshot (`recovery/a22a-baseline.snap`) is committed as a recovery point.
 
 Gaps: discovery failures are not fully mocked; CLI/filesystem/snapshot failure paths
-are not comprehensively tested; the physical restore path, unplug failures, different
-revisions, independent XY, precision CPI measurements and persistence remain untested.
+are not comprehensively tested; interrupted restore, unplug failures, different
+revisions, X/Y scale effects, precision CPI measurements and persistence remain
+untested.
 Sanitizers and mocks do not establish firmware safety.
 
 ## Live checks

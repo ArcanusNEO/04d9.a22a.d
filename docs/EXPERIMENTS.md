@@ -150,19 +150,19 @@ sets the count first (when it differs) and then selects the slot.
 
 Owner-observed speed comparison after enabling all slots:
 
-| Slot | raw (X) | raw mod 64 | effective CPI | Owner observation |
-| --- | ---: | ---: | ---: | --- |
-| 6 | 62 | 62 | 6200 | fast |
-| 7 | 80 | 16 | 1600 | slower than slot 6 |
+| Slot | raw (X) | prior `raw & 63` estimate | Owner observation |
+| --- | ---: | ---: | --- |
+| 6 | 62 | 6200 | fast |
+| 7 | 80 | 1600 | slower than slot 6 |
 
-This is the definitive signature of a six-bit resolution register: raw 80 wraps to
-16, so slot 7 behaves as 1600 CPI, while slot 6 (raw 62) is 6200 CPI. It confirms the
-wrap hypothesis and, together with `raw * 100`, points to a PixArt PAW3333-family
-sensor (see [SOURCES.md](SOURCES.md) S6).
+At the time, the relative speed report was interpreted as a six-bit wrap. It did
+not measure the absolute CPI of slot 7, so the 1600 figure was a software estimate,
+not a calibrated result. The OEM encoder analysis added on 2026-09-29 below shows
+that this comparison does not uniquely prove modulo-64 behavior.
 
 ## Sensor inference
 
-Recorded as inference, not a read die marking:
+Historical hypothesis as of 2026-09-07, not a read die marking:
 
 - CPI = raw * 100, matching libratbag's PAW3333 entry (200..8000, step 100).
 - Six-bit resolution register: raw >= 64 wraps modulo 64; effective 0..6300 CPI.
@@ -173,8 +173,41 @@ Recorded as inference, not a read die marking:
 - PAW3333/PAW3335 register maps are NDA; `sensor_srom_id = 0x03` and register pairs
   `(0x2e,0x10)/(0x42,0x00)` are not decoded.
 
-The CLI now limits `dpi` to 100..6300 and displays stored raw values through
-the six-bit mask, so an inactive 224 is reported as 32 (3200 CPI), not 22400.
+At the time, the CLI limited `dpi` to 100..6300 and displayed values through the
+six-bit mask. Those display estimates are now under review; see the static-analysis
+update below.
+
+## Static-analysis update: OEM Sensor=3327 encoding (2026-09-29)
+
+Ghidra analysis of the packaged `MouseDriver.exe` finds that A22A's `Data.ini`
+sets `Sensor=3327` (`0x0cff`). The performance-page initializer gives this sensor
+a 12400 maximum and slider range 1..124. In the profile writer, a logical stage
+value `n` is encoded as `2` for `n=1`, unchanged for `2..62`, and
+`floor(n/2) | 0x40` for `n>=63`. The high-range branch is not a modulo-64 mask.
+This is static software evidence; it does not establish how the connected
+firmware reads every stored byte or the calibrated physical CPI. In particular,
+the earlier `raw 80 -> 1600` estimate is not verified.
+
+The successful 1200/1600/3200 writes used values below the high-range branch.
+Their readbacks remain valid observations. See
+[REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md) and
+[SOURCES.md](SOURCES.md) S7.
+
+Owner update after this record: `restore` has since been exercised on the
+connected mouse and confirmed to restore correctly. The earlier statement that
+it had never been exercised describes the 2026-09-07 checkpoint only. This does
+not cover interrupted or partial-transfer restore failures.
+
+## Read-only DPI codec check (2026-09-29)
+
+With the mouse connected, `show` reported profile 1 / slot 1, X raw `0x18`, Y
+raw `0x14`, report-rate code `0x04` (250 Hz), and X/Y scale bytes 100/100. The
+Sensor=3327 decoder estimates X as 2400 CPI; this is not a calibrated physical
+measurement. Slot 7's X byte is `0x50`, which the extracted Sensor=3327 writer
+does not emit and the current decoder leaves unmapped; slot 6 remains
+uninterpreted because its candidate X high-mask bit is set. Running `dpi 2400`
+detected that the target byte already matched and returned without writing
+configuration. No DPI value was written during this check.
 
 ## Report rate
 

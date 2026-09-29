@@ -16,17 +16,21 @@
 #include <unistd.h>
 
 /* Experimental API B support for the inspected 04d9:a22a revision 0101.
- * X is assumed to drive both axes. Sensor is inferred to be PixArt PAW33xx
- * (PAW3333 family) over SPI, CPI = raw * 100 with a 6-bit resolution register:
- * raw >= 64 wraps modulo 64, so the effective range is raw 0..63 (0..6300
- * CPI).
+ * The OEM Windows package identifies Sensor=3327, conflicting with an earlier
+ * PAW3333 inference; the physical sensor is unresolved. Tested 1200/1600/3200
+ * writes use the direct low-range 100-CPI mapping. The OEM 3327 writer uses a
+ * bit-6 high-range encoding from n >= 63; the CLI now mirrors that encoder and
+ * displays an inverse CPI estimate. Physical calibration remains unverified.
+ * This CLI writes X only and preserves Y; profile X/Y scale effects are unknown.
  */
 enum
 {
   BLOCK = 128,
-  RES_BITS = 6,
-  RAW_MASK = 63,
-  MAX_DPI = 6300,
+  DPI_CODE_MASK = 0x3f,
+  DPI_EXTENDED = 0x40,
+  DPI_RESERVED = 0x80,
+  MIN_DPI = 200,
+  MAX_DPI = 12400,
   PROFILES = 6
 };
 /* Snapshot format: magic(9) version(2 LE) then, for each profile 0..5, the
@@ -237,16 +241,57 @@ write_buttons (int fd, uint8_t profile, const uint8_t data[BLOCK])
   return write_block (fd, 0x0d, profile, data);
 }
 
-static unsigned
+static uint8_t
 raw_dpi (const uint8_t data[BLOCK], unsigned slot, bool y)
 {
-  return data[(y ? 92 : 84) + slot - 1] & RAW_MASK;
+  return data[(y ? 92 : 84) + slot - 1];
+}
+
+/* Sensor=3327 write encoding recovered from the OEM Windows application's
+ * profile writer. `dpi / 100` is kept in the sensor's direct range through
+ * 6200; above that, bit 6 selects the half-rate/high-range representation. */
+static uint8_t
+encode_dpi (unsigned dpi)
+{
+  unsigned n = dpi / 100;
+  if (n == 1)
+    return 2;
+  if (n < 63)
+    return (uint8_t)n;
+  return (uint8_t)((n / 2) | DPI_EXTENDED);
+}
+
+/* The inverse is an estimate: the OEM writer's odd high-range values collide
+ * with the preceding even value, and no physical CPI calibration is available. */
+static bool
+decode_dpi (uint8_t raw, unsigned *dpi)
+{
+  if ((raw & DPI_RESERVED) || raw == 1 || raw == 0x3f)
+    return false;
+  unsigned code = raw & DPI_CODE_MASK;
+  if (raw & DPI_EXTENDED)
+    {
+      if (code < 31 || raw > 0x7e)
+        return false;
+      *dpi = code * 200;
+    }
+  else
+    *dpi = code * 100;
+  return true;
+}
+
+static bool
+estimate_slot_dpi (const uint8_t data[BLOCK], unsigned slot, unsigned *dpi)
+{
+  if (slot < 1 || slot > 8 || (data[82] & (1u << (slot - 1))))
+    return false;
+  return decode_dpi (raw_dpi (data, slot, false), dpi);
 }
 
 static void
 edit_dpi (uint8_t data[BLOCK], unsigned slot, unsigned dpi)
 {
-  data[84 + slot - 1] = (uint8_t)(dpi / 100);
+  data[84 + slot - 1] = encode_dpi (dpi);
 }
 
 /* Scroll records occupy button-config bytes 56..63: record 14 (scroll up) and
@@ -546,11 +591,17 @@ self_test (void)
     data[i] = (uint8_t)(i * 17);
   for (unsigned slot = 1; slot <= 8; slot++)
     {
-      for (unsigned dpi = 100; dpi <= MAX_DPI; dpi += 100)
+      for (unsigned dpi = MIN_DPI; dpi <= MAX_DPI; dpi += 100)
         {
           memcpy (changed, data, BLOCK);
           edit_dpi (changed, slot, dpi);
-          if (raw_dpi (changed, slot, false) * 100 != dpi
+          unsigned encoded = dpi / 100;
+          unsigned estimate
+              = encoded < 63 ? dpi : (encoded / 2) * 200;
+          unsigned decoded;
+          if (raw_dpi (changed, slot, false) != encode_dpi (dpi)
+              || !decode_dpi (raw_dpi (changed, slot, false), &decoded)
+              || decoded != estimate
               || raw_dpi (changed, slot, true) != raw_dpi (data, slot, true))
             return 1;
           for (unsigned i = 0; i < BLOCK; i++)
@@ -558,15 +609,20 @@ self_test (void)
               if (i != 84 + slot - 1 && changed[i] != data[i])
                 return 1;
             }
-        }
+      }
     }
   memcpy (changed, data, BLOCK);
-  edit_dpi (changed, 1, MAX_DPI);
-  changed[84] = 64;
-  if (raw_dpi (changed, 1, false) != 0)
+  if (encode_dpi (100) != 2 || encode_dpi (6200) != 62
+      || encode_dpi (6300) != 0x5f || encode_dpi (6400) != 0x60
+      || encode_dpi (8000) != 0x68 || encode_dpi (MAX_DPI) != 0x7e)
     return 1;
-  changed[84] = 80;
-  if (raw_dpi (changed, 1, false) != 16)
+  unsigned decoded;
+  if (!decode_dpi (0x68, &decoded) || decoded != 8000
+      || !decode_dpi (0x5f, &decoded) || decoded != 6200
+      || decode_dpi (0xe0, &decoded))
+    return 1;
+  edit_dpi (changed, 1, MAX_DPI);
+  if (raw_dpi (changed, 1, false) != 0x7e)
     return 1;
   for (unsigned pr = 0; pr < PROFILES; pr++)
     for (unsigned b = 0; b < 2; b++)
@@ -587,8 +643,8 @@ self_test (void)
         return 1;
       snap[i] ^= 1;
     }
-  puts ("PASS: packets, all slots/6-bit encodings, mod-64 wrap, "
-        "unrelated-byte preservation, snapshot roundtrip/corruption.");
+  puts ("PASS: packets, all slots/Sensor=3327 DPI codec, unrelated-byte "
+        "preservation, snapshot roundtrip/corruption.");
   return 0;
 }
 
@@ -609,7 +665,8 @@ print_usage (FILE *out, const char *prog)
            "  %s led brightness 0..255\n"
            "  %s led speed 0..255\n"
            "  %s help|-h|--help\n"
-           "Experimental shared-X DPI, step 100, sensor 6-bit (100..6300).\n"
+            "Sensor=3327 DPI encoding: 200..12400 by 100; high odd steps may "
+            "round down.\n"
            "Rate options: 125, 250, 500, 1000. Profiles: 0..5.\n"
            "Lighting modes: off, single, waterflow, breathing.\n"
            "Writes are immediate and may persist. Close vendor software; do "
@@ -618,11 +675,10 @@ print_usage (FILE *out, const char *prog)
            prog, prog, prog);
 }
 
-/* Decode the illumination mode byte. Probe results on A22A: the low two bits
- * select the effect (0=off, 1=single, 2=waterflow, 3=breathing); the upper
- * bits repeat these four effects and were not visibly distinct. The single
- * mode shows the current slot's DPI color, held steady when speed==0 or
- * blinking when speed>0. */
+/* Legacy, unverified illumination display decoder. The OEM writer stores a
+ * zero-based effect index (0..11) at byte 71 and effect-specific parameters in
+ * bytes 72..73. The old low-two-bit aliasing below is inconsistent with that
+ * static OEM mapping and must not be treated as a complete mode decoder. */
 static const char *
 illum_mode_name (uint8_t mode)
 {
@@ -694,6 +750,7 @@ print_state (int fd, bool verbose, int profile_index)
 {
   uint8_t profile, slot;
   uint8_t data[BLOCK], buttons[BLOCK], rate_raw;
+  unsigned x_estimate;
   if (current (fd, &profile, &slot))
     fail ("Cannot read current state.");
   if (profile_index >= 0)
@@ -703,9 +760,15 @@ print_state (int fd, bool verbose, int profile_index)
   printf (
       "Device 04d9:a22a revision 0101; profile=%u, slot=%u (wire indices)\n",
       profile, slot);
-  printf ("Current X raw=%u, estimated shared DPI=%u; Y raw=%u (preserved).\n",
-          raw_dpi (data, slot, false), raw_dpi (data, slot, false) * 100,
-          raw_dpi (data, slot, true));
+  if (estimate_slot_dpi (data, slot, &x_estimate))
+    printf ("Current X raw=0x%02x, Sensor=3327 code estimate=%u CPI; "
+            "Y raw=0x%02x (not decoded).\n",
+            raw_dpi (data, slot, false), x_estimate,
+            raw_dpi (data, slot, true));
+  else
+    printf ("Current X raw=0x%02x (estimate unavailable); Y raw=0x%02x "
+            "(not decoded).\n",
+            raw_dpi (data, slot, false), raw_dpi (data, slot, true));
   printf ("Candidate count=%u, enabled mask=0x%02x, scale X/Y=%u/%u\n",
           data[70], data[100], data[74], data[75]);
   if (get_rate (fd, profile, &rate_raw) == 0)
@@ -720,20 +783,33 @@ print_state (int fd, bool verbose, int profile_index)
   else
     printf ("Wheel direction: unknown (scroll records unrecognized)\n");
   print_lighting (data, profile);
-  printf ("Sensor inferred PAW33xx 6-bit; raw>=64 wraps mod 64 (0..63 => "
-          "0..6300 CPI).\n"
-          "Unverified high masks X/Y=0x%02x/0x%02x; displayed DPI uses low 6 "
-          "bits.\n",
+  printf ("Sensor model unverified (OEM config: 3327); the displayed CPI is an "
+          "encoding estimate, not physical calibration.\n"
+          "Unverified high masks X/Y=0x%02x/0x%02x.\n",
           data[82], data[83]);
   if (verbose)
     for (unsigned s = 1; s <= 8; s++)
-      printf ("slot %u: X=%u (~%u DPI), Y=%u, #%02x%02x%02x, "
-              "enabled-by-count-and-mask=%s\n",
-              s, raw_dpi (data, s, false), raw_dpi (data, s, false) * 100,
-              raw_dpi (data, s, true), data[DPI_COLOR + (s - 1) * 3],
-              data[DPI_COLOR + (s - 1) * 3 + 1],
-              data[DPI_COLOR + (s - 1) * 3 + 2],
-              s <= data[70] && (data[100] & (1u << (s - 1))) ? "yes" : "no");
+      {
+        unsigned estimate;
+        if (estimate_slot_dpi (data, s, &estimate))
+          printf ("slot %u: X raw=0x%02x (~%u CPI estimate), Y raw=0x%02x, "
+                  "#%02x%02x%02x, enabled-by-count-and-mask=%s\n",
+                  s, raw_dpi (data, s, false), estimate,
+                  raw_dpi (data, s, true), data[DPI_COLOR + (s - 1) * 3],
+                  data[DPI_COLOR + (s - 1) * 3 + 1],
+                  data[DPI_COLOR + (s - 1) * 3 + 2],
+                  s <= data[70] && (data[100] & (1u << (s - 1))) ? "yes"
+                                                                  : "no");
+        else
+          printf ("slot %u: X raw=0x%02x (unmapped), Y raw=0x%02x, "
+                  "#%02x%02x%02x, enabled-by-count-and-mask=%s\n",
+                  s, raw_dpi (data, s, false), raw_dpi (data, s, true),
+                  data[DPI_COLOR + (s - 1) * 3],
+                  data[DPI_COLOR + (s - 1) * 3 + 1],
+                  data[DPI_COLOR + (s - 1) * 3 + 2],
+                  s <= data[70] && (data[100] & (1u << (s - 1))) ? "yes"
+                                                                  : "no");
+      }
 }
 
 int
@@ -796,10 +872,9 @@ main (int argc, char **argv)
       char *end;
       errno = 0;
       unsigned long value = strtoul (argv[2], &end, 10);
-      if (errno || end == argv[2] || *end || value < 100 || value > MAX_DPI
+      if (errno || end == argv[2] || *end || value < MIN_DPI || value > MAX_DPI
           || value % 100)
-        fail ("DPI must be 100..6300 in steps of 100 (raw 6-bit sensor); "
-              "device not opened.");
+        fail ("DPI must be 200..12400 in steps of 100; device not opened.");
       dpi = (unsigned)value;
     }
   unsigned target_slot = 0;
@@ -978,11 +1053,17 @@ main (int argc, char **argv)
               || check_profile != profile || check_slot != target_slot)
             fail ("Slot selection unverified; firmware may have rejected it "
                   "(e.g. count too low).");
-          printf ("Active slot changed to %u (wire index). X low=%u (~%u DPI), "
-                  "Y low=%u.\n",
-                  target_slot, raw_dpi (original, target_slot, false),
-                  raw_dpi (original, target_slot, false) * 100,
-                  raw_dpi (original, target_slot, true));
+          unsigned estimate;
+          if (estimate_slot_dpi (original, target_slot, &estimate))
+            printf ("Active slot changed to %u (wire index). X raw=0x%02x "
+                    "(~%u CPI estimate), Y raw=0x%02x.\n",
+                    target_slot, raw_dpi (original, target_slot, false),
+                    estimate, raw_dpi (original, target_slot, true));
+          else
+            printf ("Active slot changed to %u (wire index). X raw=0x%02x "
+                    "(estimate unavailable), Y raw=0x%02x.\n",
+                    target_slot, raw_dpi (original, target_slot, false),
+                    raw_dpi (original, target_slot, true));
         }
       if (slot_count && target_slot < original[70])
         {
@@ -1154,10 +1235,17 @@ main (int argc, char **argv)
       return 0;
     }
   commit_profile (fd, profile, slot, original, target);
-  printf ("Verified configuration readback, estimated shared DPI=%u.\n"
-          "Physical sensitivity and persistence across power cycles are not "
-          "measured.\n",
-          raw_dpi (target, slot, false) * 100);
+  unsigned estimate;
+  if (estimate_slot_dpi (target, slot, &estimate))
+    printf ("Verified block readback: requested=%u, X code=0x%02x, "
+            "Sensor=3327 estimate=%u CPI.\n",
+            dpi, raw_dpi (target, slot, false), estimate);
+  else
+    printf ("Verified block readback: requested=%u, X code=0x%02x; "
+            "CPI estimate unavailable.\n",
+            dpi, raw_dpi (target, slot, false));
+  printf ("Physical sensitivity and persistence across power cycles are not "
+          "measured.\n");
   print_state (fd, true, -1);
   close (fd);
   return 0;

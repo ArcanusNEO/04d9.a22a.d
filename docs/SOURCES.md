@@ -65,8 +65,9 @@ the Anko example is output-only with a 64-byte endpoint maximum but a 32-byte Ou
 report and an 8-byte Feature report. Current A22A has bidirectional **64-byte reports**.
 These differences motivated investigating B instead of blindly replaying A's commands.
 
-The investigation found no useful pre-existing A22A-specific driver or OEM protocol
-document in the searches performed. This is a search result, not proof none exists.
+The initial search found no useful pre-existing A22A-specific driver or OEM protocol
+document. The local Windows installer examined later is recorded as S7; the initial
+search result was not proof that no OEM material existed.
 
 ## S4: Holtek official documents, archived in full
 
@@ -116,7 +117,7 @@ quirks for selected PIDs, not this device's configuration commands.
 The C tool uses kernel HIDIOCGRAWINFO, HIDIOCGRDESCSIZE, HIDIOCGRDESC,
 HIDIOCSFEATURE and HIDIOCGFEATURE directly. It does not link against HIDAPI.
 
-## S6: Sensor identification (PAW33xx / PAW3333)
+## S6: Earlier sensor hypothesis (PAW33xx / PAW3333)
 
 Research date 2026-09-07. No local mouse was opened; no NDA datasheet was consulted.
 The sensor part is a strong inference, not a read die marking.
@@ -124,7 +125,10 @@ The sensor part is a strong inference, not a read die marking.
 - [libratbag PR #1561 diff](https://github.com/libratbag/libratbag/pull/1561.diff) —
   `holtek8-shared.c` sensor table lists only two real sensors for the holtek8b
   family: PAW3333 (200..8000 CPI, step 100) and PMW3320 (250..3500 CPI, step 250).
-- The local `raw * 100` evidence selects PAW3333 and rules out PMW3320 (step 250).
+- Before examining the OEM installer, the local `raw * 100` evidence selected
+  PAW3333 among the two sensor entries in this proposal and ruled out its PMW3320
+  entry (step 250). That inference was not a die read and assumed this A22A used
+  one of those reference parts.
 - `bcdDevice 0101` maps to `SensorType=PAW3333` in the PR's device data
   (`data/devices/genesis-krypton-750.device`).
 - [PR comment](https://github.com/libratbag/libratbag/pull/1561#issuecomment-2693164941) —
@@ -140,11 +144,46 @@ The sensor part is a strong inference, not a read die marking.
   0x2e appears only as a value, not a register; confirms register maps are NDA'd
   for the PAW33xx family and must not be invented.
 
-The decisive non-invasive signature is the observed six-bit wrap: raw 64 -> 0 and
-raw 80 -> 16, matching a 6-bit resolution register driven by `raw * 100`. Profile
-fields `sensor_srom_id = 0x03`, `sensor_firmware_size = 0x0ffe`, and register pairs
-`(0x2e, 0x10)`/`(0x42, 0x00)` remain undecodable without the NDA datasheet.
+At the time of the 2026-09-07 experiment, raw 64 -> 0 and raw 80 -> 16 were
+interpreted as a six-bit wrap. The raw-80 conclusion depended on an uncalibrated
+relative speed comparison and is superseded by the OEM-code analysis in S7. The
+successful low-range 1200/1600/3200 writes still establish those individual settings.
+Profile fields `sensor_srom_id = 0x03`, `sensor_firmware_size = 0x0ffe`, and
+register pairs `(0x2e, 0x10)`/`(0x42, 0x00)` remain undecodable without the NDA
+datasheet.
 
-Conclusion recorded here: inferred PixArt PAW3333 (PAW33xx family), MCU Holtek
-HT68FB550/560 family, SPI sensor, CPI = raw * 100 with 6-bit resolution and mod-64
-wrap. Definitive identification requires opening the device or the NDA datasheet.
+The 100-CPI relationship for the three tested low settings is observed. The old
+low-six-bit/modulo-64 interpretation is not an independent device observation;
+the PAW3333 identification and HT68FB550/560 MCU family remain hypotheses. The
+OEM package is stronger A22A-specific sensor evidence, but neither its `Sensor`
+setting nor the reference driver's similar device entry is a die marking.
+Definitive identification requires a PCB marking or a matching datasheet.
+
+## S7: Local OEM Windows installer
+
+- Sample: [`vendor/IE3.0+A3327_setup.exe`](../vendor/IE3.0+A3327_setup.exe); SHA-256
+  `4923de8d3ebd7c99182e9b5621eca80bb300c775a87830826c0e17f60de04539`.
+- Inno Setup 6.1.0 Unicode package for `IE3.0 A3327`, product version 1.0.
+- The extracted `app/Data.ini` names `VID=04D9`, `PID=A22A`, and `Sensor=3327`.
+  This is a product-specific vendor setting, not direct proof of the fitted die;
+  it conflicts with S6's earlier PAW3333 inference.
+- `app/hiddll.dll` statically confirms nine-byte Feature calls and 65-byte
+  Windows HID report reads/writes (including the report-ID byte), matching the
+  current Linux transport sizes. The command IDs/checksums below came from
+  `MouseDriver.exe`, not from this helper DLL alone.
+- Ghidra 12.1.4 static analysis recovered the Apply sequence and commands:
+  `0x02` profile select, `0x03` report rate, `0x04` stage select, `0x0c`
+  profile block, `0x0d` button block, and `0x0f` macro data. The UI's five File
+  slots are passed as profile indices 1..5; profile 0 is used by the global
+  config/color path. Both block writes send two 64-byte Output reports.
+- For `Sensor=3327`, the UI advertises 12400 and the OEM writer encodes stage
+  values `n >= 63` as `(n / 2) | 0x40` (`n=1` maps to `02`). This conflicts with
+  the Linux tool's earlier modulo-64 interpretation. Linux now follows this
+  write-side mapping; readback decoding and physical CPI still require device
+  verification.
+- The OEM X/Y scale controls are written to profile block bytes 74/75. The Apply
+  path also calls `SetDoubleClickTime` and `SystemParametersInfoW` for host
+  pointer, scroll and double-click settings.
+- The installer contains the Windows GUI and configuration templates, but no
+  `.sys` kernel driver or standalone sensor SROM image was found. Extraction and
+  evidence are documented in [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md).

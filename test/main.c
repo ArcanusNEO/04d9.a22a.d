@@ -129,26 +129,33 @@ test_pure_logic (void)
   if (scroll_is_natural (data))
     fail ("FAIL: scroll back to normal");
 
-  /* raw_dpi 6-bit wrap */
+  /* Sensor=3327 wire codec and estimated inverse. */
+  unsigned estimate;
   data[84] = 16;
   if (raw_dpi (data, 1, false) != 16)
     fail ("FAIL: raw_dpi slot1");
-  data[84] = 64;
-  if (raw_dpi (data, 1, false) != 0)
-    fail ("FAIL: raw_dpi wrap 64");
-  data[84] = 80;
-  if (raw_dpi (data, 1, false) != 16)
-    fail ("FAIL: raw_dpi wrap 80");
-  data[84] = 255;
-  if (raw_dpi (data, 1, false) != 63)
-    fail ("FAIL: raw_dpi wrap 255");
+  if (encode_dpi (100) != 2 || encode_dpi (200) != 2
+      || encode_dpi (3200) != 32 || encode_dpi (6200) != 62
+      || encode_dpi (6300) != 0x5f || encode_dpi (6400) != 0x60
+      || encode_dpi (8000) != 0x68 || encode_dpi (12400) != 0x7e)
+    fail ("FAIL: encode_dpi Sensor=3327 mapping");
+  if (decode_dpi (0x50, &estimate)
+      || !decode_dpi (0x68, &estimate) || estimate != 8000
+      || !decode_dpi (0x5f, &estimate) || estimate != 6200
+      || !decode_dpi (0x7e, &estimate) || estimate != 12400
+      || decode_dpi (0x01, &estimate) || decode_dpi (0x3f, &estimate)
+      || decode_dpi (0x40, &estimate) || decode_dpi (0xe0, &estimate))
+    fail ("FAIL: decode_dpi estimate");
 
   /* edit_dpi */
   edit_dpi (data, 1, 3200);
   if (data[84] != 32)
     fail ("FAIL: edit_dpi");
+  edit_dpi (data, 1, 8000);
+  if (data[84] != 0x68)
+    fail ("FAIL: edit_dpi high range");
 
-  puts ("PASS: pure logic (rate map, scroll direction, 6-bit DPI wrap).");
+  puts ("PASS: pure logic (rate map, scroll direction, Sensor=3327 DPI codec).");
 }
 
 int
