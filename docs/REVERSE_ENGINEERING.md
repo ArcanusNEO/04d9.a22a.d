@@ -170,9 +170,9 @@ labels therefore map to these byte values:
 | 12 | Flying star | 11 |
 
 Only options 1-4 and 10-11 are visible in this A3327 layout. The app does not
-decode mode as `byte & 3`: values 9 and 10 remain distinct effects. This differs
-from the Linux `illum_mode_name` low-two-bit decoder and its `single`/`waterflow`
-labels.
+decode mode as `byte & 3`: values 9 and 10 remain distinct effects. This
+invalidates the former Linux low-two-bit decoder and its `single`/`waterflow`
+labels; the current CLI uses the full zero-based enum.
 
 The writer also creates bytes 72-73 from two per-effect parameters, rather than
 copying one universal “brightness” and “speed” pair. In the recovered code the
@@ -254,9 +254,9 @@ The lighting UI defines twelve names (`Off`, `Standard`, `Twinkle`, `Breathing`,
 `Neon`, `Wave`, `Slide`, `Finger movement`, `Flip up and down`, `YO-YO`,
 `Cross flash`, `Flying star`); modes 1-4 and 10-11 are visible in this layout.
 Intensity and pulse controls include 0..255 sliders. These UI ranges and labels
-are useful trace targets, but are not proof that the corresponding values map
-directly to profile bytes 71-73 or that the current Linux `led` commands are
-correct.
+are useful trace targets, but do not establish a slider-to-A/B conversion. The
+Linux `led mode` command applies the statically recovered per-effect writer
+transforms; visible behavior and slider conversion still need hardware capture.
 
 ## Next reverse-engineering steps
 

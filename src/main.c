@@ -310,17 +310,51 @@ enum
 };
 /* Illumination fields in the 128-byte profile block. Offsets 71..73 and
  * 104..127 are per-profile; 16..47 are global and live only in profile 0.
- * All are candidate (inferred from the reference driver) and not yet
- * validated by a write experiment. */
+ * The OEM writer's mode and parameter encodings are statically recovered;
+ * physical effects are not yet hardware-verified. */
 enum
 {
   INDICATOR_ENABLE = 16, /* 8 bytes, profile 0 only */
   ILLUM_COLOR = 24,      /* 8 RGB triples (24..47), profile 0 only */
   ILLUM_MODE = 71,
-  ILLUM_INTENSITY = 72,
-  ILLUM_SPEED = 73,
+  ILLUM_PARAM_A = 72,
+  ILLUM_PARAM_B = 73,
   DPI_COLOR = 104 /* 8 RGB triples (104..127), per profile */
 };
+
+enum
+{
+  ILLUM_OFF = 0,
+  ILLUM_STANDARD = 1,
+  ILLUM_TWINKLE = 2,
+  ILLUM_BREATHING = 3,
+  ILLUM_NEON = 4,
+  ILLUM_WAVE = 5,
+  ILLUM_SLIDE = 6,
+  ILLUM_FINGER = 7,
+  ILLUM_FLIP = 8,
+  ILLUM_YOYO = 9,
+  ILLUM_CROSS = 10,
+  ILLUM_FLYING = 11,
+  ILLUM_MODE_COUNT = 12
+};
+
+static const char *const illum_mode_cli_names[ILLUM_MODE_COUNT]
+    = { "off", "standard", "twinkle", "breathing", "neon", "wave",
+        "slide", "finger", "flip", "yoyo", "cross", "flying" };
+static const char *const illum_mode_labels[ILLUM_MODE_COUNT]
+    = { "Off", "Standard", "Twinkle", "Breathing", "Neon", "Wave",
+        "Slide", "Finger movement", "Flip up and down", "YO-YO",
+        "Cross flash", "Flying star" };
+
+static const char *illum_mode_name (uint8_t mode);
+static int illum_mode_from_name (const char *name);
+static int illum_mode_argument_count (unsigned mode);
+static bool encode_illumination_parameters (unsigned mode, unsigned a,
+                                           unsigned b, uint8_t *byte_a,
+                                           uint8_t *byte_b);
+static bool edit_illumination (uint8_t data[BLOCK], unsigned mode,
+                               unsigned a, unsigned b);
 
 static void
 scroll_set_direction (uint8_t data[BLOCK], bool natural)
@@ -624,6 +658,60 @@ self_test (void)
   edit_dpi (changed, 1, MAX_DPI);
   if (raw_dpi (changed, 1, false) != 0x7e)
     return 1;
+  static const struct
+  {
+    unsigned mode, a, b;
+    uint8_t byte_a, byte_b;
+  } illumination_cases[] = {
+    { ILLUM_OFF, 0, 0, 0, 0 },
+    { ILLUM_STANDARD, 0x44, 0, 0x44, 0 },
+    { ILLUM_TWINKLE, 0x12, 0, 0x12, 0 },
+    { ILLUM_BREATHING, 0, 3, 0, 8 },
+    { ILLUM_NEON, 0, 11, 0, 0 },
+    { ILLUM_WAVE, 0x45, 0x67, 0x45, 0x67 },
+    { ILLUM_SLIDE, 0, 0, 0, 0 },
+    { ILLUM_FINGER, 0x22, 0, 0x22, 0 },
+    { ILLUM_FLIP, 0x35, 4, 0x35, 0x10 },
+    { ILLUM_YOYO, 7, 5, 7, 10 },
+    { ILLUM_CROSS, 7, 6, 7, 24 },
+    { ILLUM_FLYING, 0, 0, 0, 0 }
+  };
+  for (unsigned i = 0;
+       i < sizeof (illumination_cases) / sizeof (illumination_cases[0]); i++)
+    {
+      for (unsigned j = 0; j < BLOCK; j++)
+        data[j] = (uint8_t)(j * 11 + 3);
+      memcpy (changed, data, BLOCK);
+      if (!edit_illumination (changed, illumination_cases[i].mode,
+                              illumination_cases[i].a,
+                              illumination_cases[i].b)
+          || changed[ILLUM_MODE] != illumination_cases[i].mode
+          || changed[ILLUM_PARAM_A] != illumination_cases[i].byte_a
+          || changed[ILLUM_PARAM_B] != illumination_cases[i].byte_b
+          || strcmp (illum_mode_name (changed[ILLUM_MODE]), "unknown") == 0)
+        return 1;
+      for (unsigned j = 0; j < BLOCK; j++)
+        if (j != ILLUM_MODE && j != ILLUM_PARAM_A && j != ILLUM_PARAM_B
+            && changed[j] != data[j])
+          return 1;
+    }
+  uint8_t byte_a, byte_b;
+  if (illum_mode_from_name ("standard") != ILLUM_STANDARD
+      || illum_mode_from_name ("yo-yo") != ILLUM_YOYO
+      || illum_mode_argument_count (ILLUM_OFF) != 0
+      || illum_mode_argument_count (ILLUM_BREATHING) != 1
+      || illum_mode_argument_count (ILLUM_WAVE) != 2
+      || encode_illumination_parameters (ILLUM_BREATHING, 0, 12, &byte_a,
+                                         &byte_b)
+      || encode_illumination_parameters (ILLUM_FLIP, 1, 21, &byte_a,
+                                         &byte_b)
+      || encode_illumination_parameters (ILLUM_YOYO, 1, 16, &byte_a,
+                                         &byte_b)
+      || encode_illumination_parameters (ILLUM_CROSS, 1, 31, &byte_a,
+                                         &byte_b)
+      || encode_illumination_parameters (ILLUM_MODE_COUNT, 0, 0, &byte_a,
+                                         &byte_b))
+    return 1;
   for (unsigned pr = 0; pr < PROFILES; pr++)
     for (unsigned b = 0; b < 2; b++)
       for (unsigned i = 0; i < BLOCK; i++)
@@ -643,8 +731,8 @@ self_test (void)
         return 1;
       snap[i] ^= 1;
     }
-  puts ("PASS: packets, all slots/Sensor=3327 DPI codec, unrelated-byte "
-        "preservation, snapshot roundtrip/corruption.");
+  puts ("PASS: packets, DPI codec, OEM LED modes/parameter transforms, "
+        "unrelated-byte preservation, snapshot roundtrip/corruption.");
   return 0;
 }
 
@@ -661,54 +749,149 @@ print_usage (FILE *out, const char *prog)
            "  %s wheel\n"
            "  %s snapshot FILE\n"
            "  %s restore FILE\n"
-           "  %s led mode MODE\n"
-           "  %s led brightness 0..255\n"
-           "  %s led speed 0..255\n"
+           "  %s led mode MODE [A [B]]\n"
            "  %s help|-h|--help\n"
-            "Sensor=3327 DPI encoding: 200..12400 by 100; high odd steps may "
-            "round down.\n"
+           "Sensor=3327 DPI encoding: 200..12400 by 100; high odd steps may "
+           "round down.\n"
            "Rate options: 125, 250, 500, 1000. Profiles: 0..5.\n"
-           "Lighting modes: off, single, waterflow, breathing.\n"
+           "LED modes use OEM indices: off, standard, twinkle, breathing, "
+           "neon, wave, slide, finger, flip, yoyo, cross, flying.\n"
+           "Mode-specific A/B parameters are required; see README.\n"
            "Writes are immediate and may persist. Close vendor software; do "
            "not unplug.\n",
            prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
-           prog, prog, prog);
+           prog);
 }
 
-/* Legacy, unverified illumination display decoder. The OEM writer stores a
- * zero-based effect index (0..11) at byte 71 and effect-specific parameters in
- * bytes 72..73. The old low-two-bit aliasing below is inconsistent with that
- * static OEM mapping and must not be treated as a complete mode decoder. */
 static const char *
 illum_mode_name (uint8_t mode)
 {
-  switch (mode & 0x03)
-    {
-    case 0x00:
-      return "off";
-    case 0x01:
-      return "single";
-    case 0x02:
-      return "waterflow";
-    case 0x03:
-      return "breathing";
-    default:
-      return "unknown";
-    }
+  return mode < ILLUM_MODE_COUNT ? illum_mode_labels[mode] : "unknown";
 }
 
 static int
 illum_mode_from_name (const char *name)
 {
-  if (!strcmp (name, "off"))
-    return 0x00;
-  if (!strcmp (name, "single"))
-    return 0x01;
-  if (!strcmp (name, "waterflow"))
-    return 0x02;
-  if (!strcmp (name, "breathing"))
-    return 0x03;
+  for (unsigned i = 0; i < ILLUM_MODE_COUNT; i++)
+    if (!strcmp (name, illum_mode_cli_names[i]))
+      return (int)i;
+  if (!strcmp (name, "finger-movement"))
+    return ILLUM_FINGER;
+  if (!strcmp (name, "flip-up-down"))
+    return ILLUM_FLIP;
+  if (!strcmp (name, "yo-yo"))
+    return ILLUM_YOYO;
+  if (!strcmp (name, "cross-flash"))
+    return ILLUM_CROSS;
+  if (!strcmp (name, "flying-star"))
+    return ILLUM_FLYING;
   return -1;
+}
+
+/* Number of OEM A/B arguments accepted by each mode. Modes 3/4 consume B
+ * only; all other one-argument modes consume A. */
+static int
+illum_mode_argument_count (unsigned mode)
+{
+  switch (mode)
+    {
+    case ILLUM_OFF:
+    case ILLUM_SLIDE:
+    case ILLUM_FLYING:
+      return 0;
+    case ILLUM_STANDARD:
+    case ILLUM_TWINKLE:
+    case ILLUM_BREATHING:
+    case ILLUM_NEON:
+    case ILLUM_FINGER:
+      return 1;
+    case ILLUM_WAVE:
+    case ILLUM_FLIP:
+    case ILLUM_YOYO:
+    case ILLUM_CROSS:
+      return 2;
+    default:
+      return -1;
+    }
+}
+
+static bool
+illum_mode_uses_b_only (unsigned mode)
+{
+  return mode == ILLUM_BREATHING || mode == ILLUM_NEON;
+}
+
+/* Encode the OEM profile-writer parameters for offsets 72/73. A and B are
+ * internal writer inputs, not direct Windows slider values. */
+static bool
+encode_illumination_parameters (unsigned mode, unsigned a, unsigned b,
+                               uint8_t *byte_a, uint8_t *byte_b)
+{
+  if (a > 255 || b > 255)
+    return false;
+  switch (mode)
+    {
+    case ILLUM_OFF:
+    case ILLUM_SLIDE:
+    case ILLUM_FLYING:
+      if (a || b)
+        return false;
+      *byte_a = 0;
+      *byte_b = 0;
+      return true;
+    case ILLUM_STANDARD:
+    case ILLUM_TWINKLE:
+    case ILLUM_FINGER:
+      if (b)
+        return false;
+      *byte_a = (uint8_t)a;
+      *byte_b = 0;
+      return true;
+    case ILLUM_BREATHING:
+    case ILLUM_NEON:
+      if (a || b > 0x0b)
+        return false;
+      *byte_a = 0;
+      *byte_b = (uint8_t)(0x0b - b);
+      return true;
+    case ILLUM_WAVE:
+      *byte_a = (uint8_t)a;
+      *byte_b = (uint8_t)b;
+      return true;
+    case ILLUM_FLIP:
+      if (b > 0x14)
+        return false;
+      *byte_a = (uint8_t)a;
+      *byte_b = (uint8_t)(0x14 - b);
+      return true;
+    case ILLUM_YOYO:
+      if (b > 0x0f)
+        return false;
+      *byte_a = (uint8_t)a;
+      *byte_b = (uint8_t)(0x0f - b);
+      return true;
+    case ILLUM_CROSS:
+      if (b > 0x1e)
+        return false;
+      *byte_a = (uint8_t)a;
+      *byte_b = (uint8_t)(0x1e - b);
+      return true;
+    default:
+      return false;
+    }
+}
+
+static bool
+edit_illumination (uint8_t data[BLOCK], unsigned mode, unsigned a,
+                   unsigned b)
+{
+  uint8_t byte_a, byte_b;
+  if (!encode_illumination_parameters (mode, a, b, &byte_a, &byte_b))
+    return false;
+  data[ILLUM_MODE] = (uint8_t)mode;
+  data[ILLUM_PARAM_A] = byte_a;
+  data[ILLUM_PARAM_B] = byte_b;
+  return true;
 }
 
 static unsigned
@@ -727,9 +910,9 @@ parse_byte_arg (const char *s)
 static void
 print_lighting (const uint8_t data[BLOCK], uint8_t profile)
 {
-  printf ("Illumination mode=%u (%s), intensity=%u, speed=%u\n",
+  printf ("Illumination mode=%u (%s), raw params 72/73=%u/%u\n",
           data[ILLUM_MODE], illum_mode_name (data[ILLUM_MODE]),
-          data[ILLUM_INTENSITY], data[ILLUM_SPEED]);
+          data[ILLUM_PARAM_A], data[ILLUM_PARAM_B]);
   if (profile == 0)
     {
       printf ("Profile-0 global lighting:");
@@ -843,15 +1026,11 @@ main (int argc, char **argv)
       = argc == 5 && !strcmp (argv[1], "profile")
         && (!strcmp (argv[2], "-d") || !strcmp (argv[2], "--duplicate"));
   bool led_mode
-      = argc == 4 && !strcmp (argv[1], "led") && !strcmp (argv[2], "mode");
-  bool led_brightness = argc == 4 && !strcmp (argv[1], "led")
-                        && !strcmp (argv[2], "brightness");
-  bool led_speed
-      = argc == 4 && !strcmp (argv[1], "led") && !strcmp (argv[2], "speed");
+      = argc >= 4 && argc <= 6 && !strcmp (argv[1], "led")
+        && !strcmp (argv[2], "mode");
   if (!show && !show_profile && !set_dpi && !snapshot && !restore
       && !flip_wheel && !set_rate && !slot_cmd && !slot_count && !set_count
-      && !profile_cmd && !profile_dup && !led_mode && !led_brightness
-      && !led_speed)
+      && !profile_cmd && !profile_dup && !led_mode)
     {
       print_usage (stderr, argv[0]);
       return 2;
@@ -936,20 +1115,38 @@ main (int argc, char **argv)
         fail ("Rate must be 125, 250, 500 or 1000; device not opened.");
       target_hz = (unsigned)value;
     }
-  int led_mode_value = -1;
+  unsigned led_mode_value = 0, led_param_a = 0, led_param_b = 0;
+  uint8_t led_byte_a = 0, led_byte_b = 0;
   if (led_mode)
     {
-      led_mode_value = illum_mode_from_name (argv[3]);
-      if (led_mode_value < 0)
-        fail ("Mode must be off, single, waterflow or breathing; device not "
+      int mode = illum_mode_from_name (argv[3]);
+      if (mode < 0)
+        fail ("Unknown LED mode; use off, standard, twinkle, breathing, neon, "
+              "wave, slide, finger, flip, yoyo, cross or flying.");
+      led_mode_value = (unsigned)mode;
+      int parameter_count = illum_mode_argument_count (led_mode_value);
+      if (argc != 4 + parameter_count)
+        fail ("Wrong number of LED parameters for this mode; device not "
               "opened.");
+      if (parameter_count == 1)
+        {
+          unsigned value = parse_byte_arg (argv[4]);
+          if (illum_mode_uses_b_only (led_mode_value))
+            led_param_b = value;
+          else
+            led_param_a = value;
+        }
+      else if (parameter_count == 2)
+        {
+          led_param_a = parse_byte_arg (argv[4]);
+          led_param_b = parse_byte_arg (argv[5]);
+        }
+      if (!encode_illumination_parameters (led_mode_value, led_param_a,
+                                           led_param_b, &led_byte_a,
+                                           &led_byte_b))
+        fail ("LED B parameter is outside the range supported by this mode; "
+              "device not opened.");
     }
-  unsigned led_brightness_value = 0;
-  if (led_brightness)
-    led_brightness_value = parse_byte_arg (argv[3]);
-  unsigned led_speed_value = 0;
-  if (led_speed)
-    led_speed_value = parse_byte_arg (argv[3]);
   int fd = open_mouse ();
   uint8_t profile, slot, original[BLOCK], target[BLOCK];
   if (current (fd, &profile, &slot) || read_profile (fd, profile, original))
@@ -1197,15 +1394,12 @@ main (int argc, char **argv)
       close (fd);
       return 0;
     }
-  if (led_mode || led_brightness || led_speed)
+  if (led_mode)
     {
       memcpy (target, original, BLOCK);
-      if (led_mode)
-        target[ILLUM_MODE] = (uint8_t)led_mode_value;
-      else if (led_brightness)
-        target[ILLUM_INTENSITY] = (uint8_t)led_brightness_value;
-      else
-        target[ILLUM_SPEED] = (uint8_t)led_speed_value;
+      target[ILLUM_MODE] = (uint8_t)led_mode_value;
+      target[ILLUM_PARAM_A] = led_byte_a;
+      target[ILLUM_PARAM_B] = led_byte_b;
       if (!memcmp (original, target, BLOCK))
         {
           puts ("Already set; no configuration write performed.");
@@ -1214,8 +1408,11 @@ main (int argc, char **argv)
           return 0;
         }
       commit_profile (fd, profile, slot, original, target);
-      printf ("Lighting written to profile %u (via command 0c, guarded).\n",
-              profile);
+      printf ("LED mode %u (%s) written to profile %u; verified block bytes "
+              "71..73=%u/%u/%u. Physical effect is not hardware-verified.\n",
+              led_mode_value, illum_mode_name ((uint8_t)led_mode_value),
+              profile, target[ILLUM_MODE], target[ILLUM_PARAM_A],
+              target[ILLUM_PARAM_B]);
       print_state (fd, true, -1);
       close (fd);
       return 0;

@@ -30,14 +30,16 @@ not a universal Holtek driver.
 Implemented: device/revision/descriptor checks, state reads, profile download,
 DPI inspection, guarded DPI write, slot selection and count (`slot`), report
 rate (`rate`), profile switching and duplication (`profile`), wheel direction
-(`wheel`), and full snapshot/restore.
+(`wheel`), full snapshot/restore, and LED mode/parameter writes using the
+statically recovered Windows-writer encoding.
 
 Not implemented: X/Y scale controls, RGB, remapping, macros, profile rename,
 firmware access, GUI, daemon, udev rules, or support for other Holtek VID/PIDs.
 
-**Broken command:** `led mode`, `led brightness`, and `led speed` are not usable
-yet. The illumination fields have not been fully reverse-engineered, so their
-values and behavior are unverified. See [docs/STATUS.md](docs/STATUS.md).
+LED mode writes use the recovered Windows mode enum and per-effect transforms.
+The visible device effects and the Windows slider-to-A/B conversion have not
+been hardware-verified. Do not interpret A/B as generic brightness/speed values;
+see the mode table below and [docs/STATUS.md](docs/STATUS.md).
 
 ## Build and offline tests
 
@@ -77,10 +79,39 @@ sudo ./src/main rate 500     # 125/250/500/1000 Hz
 sudo ./src/main profile 3    # switch active profile (0..5)
 sudo ./src/main profile -d 1 2  # copy profile 1 -> 2
 sudo ./src/main wheel        # flip scroll direction
+sudo ./src/main led mode breathing 6 # OEM mode 3; B=6 -> bytes 71..73: 3,0,5
+sudo ./src/main led mode wave 80 3   # OEM mode 5; A/B -> bytes 5,80,3
 ```
 
 `slot SLOT` selects only; it does not auto-raise the count and reports failure
 if the firmware rejects it. `slot -c N SLOT` sets the count first when it differs.
+
+### LED modes
+
+`led mode MODE [A [B]]` edits mode byte 71 and both mode-parameter bytes 72/73
+in one guarded profile write. Pass exactly the number of parameters required by
+the mode:
+
+| Windows mode | CLI name | Byte 71 | Arguments | Bytes 72/73 |
+| --- | --- | ---: | --- | --- |
+| Off | `off` | 0 | none | `0, 0` |
+| Standard | `standard` | 1 | `A` (0..255) | `A, 0` |
+| Twinkle | `twinkle` | 2 | `A` (0..255) | `A, 0` |
+| Breathing | `breathing` | 3 | `B` (0..11) | `0, 11-B` |
+| Neon | `neon` | 4 | `B` (0..11) | `0, 11-B` |
+| Wave | `wave` | 5 | `A B` (both 0..255) | `A, B` |
+| Slide | `slide` | 6 | none | `0, 0` |
+| Finger movement | `finger` | 7 | `A` (0..255) | `A, 0` |
+| Flip up and down | `flip` | 8 | `A` (0..255), `B` (0..20) | `A, 20-B` |
+| YO-YO | `yoyo` | 9 | `A` (0..255), `B` (0..15) | `A, 15-B` |
+| Cross flash | `cross` | 10 | `A` (0..255), `B` (0..30) | `A, 30-B` |
+| Flying star | `flying` | 11 | none | `0, 0` |
+
+The A/B values are inputs to the recovered OEM writer transform, not a claim
+that the vendor application's 0..255 sliders map directly to these values. A
+successful command verifies the profile block and activation readback; visible
+lighting behavior remains unverified on the attached mouse. LED color setters
+are not implemented.
 
 The CLI uses the OEM Sensor=3327 stage encoder for 200..12400. High-range odd
 steps can map to the preceding 200-CPI code value; the reported number is an

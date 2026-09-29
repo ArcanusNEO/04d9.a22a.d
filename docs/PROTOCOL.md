@@ -208,8 +208,8 @@ reliable interpretation yet.
 | 64 | 1 | enabled rates | candidate | Bitmask; observed `8f` (high bits uninterpreted) |
 | 65..69 | 5 | (padding) | unknown | |
 | 70 | 1 | resolution count | **known** | Number of active slots; writable via `slot -c` |
-| 71 | 1 | illumination mode | candidate | OEM writer stores zero-based mode index 0..11; hardware effect unverified |
-| 72..73 | 2 | illumination parameters | candidate | OEM encoding is mode-dependent; see [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md) |
+| 71 | 1 | illumination mode | implemented from OEM analysis | Linux CLI writes the recovered zero-based mode index 0..11; visible effect unverified |
+| 72..73 | 2 | illumination parameters | implemented from OEM analysis | Linux CLI applies the recovered per-effect A/B transforms; Windows slider conversion and visible effect remain unverified |
 | 74..75 | 2 | X/Y scale | candidate | OEM UI writer maps X/Y scale controls here; both were 100 on inspected state; physical effect unverified |
 | 76..81 | 6 | (padding) | unknown | No confirmed XY-mode flag; OEM Sync mirrors scale values in host-side profile data |
 | 82..83 | 2 | X/Y high-bit masks | candidate | Ninth DPI bit per slot; observed `20 20` (slot 6 only) |
