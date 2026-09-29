@@ -355,6 +355,13 @@ static bool encode_illumination_parameters (unsigned mode, unsigned a,
                                            uint8_t *byte_b);
 static bool edit_illumination (uint8_t data[BLOCK], unsigned mode,
                                unsigned a, unsigned b);
+static bool parse_rgb (const char *text, uint8_t rgb[3]);
+static void edit_global_fixed_color (uint8_t data[BLOCK],
+                                     const uint8_t rgb[3]);
+static void edit_global_palette (uint8_t data[BLOCK],
+                                const uint8_t colors[8][3]);
+static bool edit_dpi_color (uint8_t data[BLOCK], unsigned slot,
+                            const uint8_t rgb[3]);
 
 static void
 scroll_set_direction (uint8_t data[BLOCK], bool natural)
@@ -581,33 +588,46 @@ restore_global_if_changed (int fd, const uint8_t saved[BLOCK],
  * readback, reselect current slot, final readback. `slot` is the wire slot to
  * reselect after the write; `target` is the intended full 128-byte block. */
 static void
-commit_profile (int fd, uint8_t profile, uint8_t slot,
-                const uint8_t original[BLOCK], const uint8_t target[BLOCK])
+commit_profile_for_active (int fd, uint8_t data_profile,
+                           uint8_t active_profile, uint8_t slot,
+                           const uint8_t original[BLOCK],
+                           const uint8_t target[BLOCK])
 {
   uint8_t verify[BLOCK];
   uint8_t global0[BLOCK];
-  bool guard = profile != 0;
+  bool guard = data_profile != 0;
   fprintf (stderr,
            "Preparing configuration write; all unrelated fields preserved.\n");
   if (guard && snapshot_global (fd, global0))
     fail ("Cannot snapshot global config; no write attempted.");
   uint8_t check_profile, check_slot;
-  if (current (fd, &check_profile, &check_slot) || check_profile != profile
-      || check_slot != slot || read_profile (fd, profile, verify)
+  if (current (fd, &check_profile, &check_slot)
+      || check_profile != active_profile || check_slot != slot
+      || read_profile (fd, data_profile, verify)
       || memcmp (verify, original, BLOCK))
     fail ("State changed during preparation; nothing written.");
-  if (write_profile (fd, profile, target))
+  if (write_profile (fd, data_profile, target))
     fail ("WRITE FAILED; state may be partial. Do not retry blindly.");
-  if (read_profile (fd, profile, verify) || memcmp (verify, target, BLOCK))
+  if (read_profile (fd, data_profile, verify)
+      || memcmp (verify, target, BLOCK))
     fail ("READBACK FAILED; no activation or automatic rollback attempted.");
-  if (send_command (fd, 0x04, profile, slot)
-      || current (fd, &check_profile, &check_slot) || check_profile != profile
+  if (send_command (fd, 0x04, active_profile, slot)
+      || current (fd, &check_profile, &check_slot)
+      || check_profile != active_profile
       || check_slot != slot)
     fail ("Configuration written, but activation unverified.");
-  if (read_profile (fd, profile, verify) || memcmp (verify, target, BLOCK))
+  if (read_profile (fd, data_profile, verify)
+      || memcmp (verify, target, BLOCK))
     fail ("Post-activation readback differs. Inspect before further writes.");
   if (guard && restore_global_if_changed (fd, global0, "profile write"))
     fail ("GLOBAL RESTORE FAILED; profile 0 may remain corrupted.");
+}
+
+static void
+commit_profile (int fd, uint8_t profile, uint8_t slot,
+                const uint8_t original[BLOCK], const uint8_t target[BLOCK])
+{
+  commit_profile_for_active (fd, profile, profile, slot, original, target);
 }
 
 static int
@@ -712,6 +732,54 @@ self_test (void)
       || encode_illumination_parameters (ILLUM_MODE_COUNT, 0, 0, &byte_a,
                                          &byte_b))
     return 1;
+  uint8_t rgb[3], palette[8][3], color_original[BLOCK], color_changed[BLOCK];
+  if (!parse_rgb ("#a10FfF", rgb) || rgb[0] != 0xa1 || rgb[1] != 0x0f
+      || rgb[2] != 0xff || parse_rgb ("12G456", rgb)
+      || parse_rgb ("12345", rgb))
+    return 1;
+  for (unsigned i = 0; i < BLOCK; i++)
+    color_original[i] = (uint8_t)(i * 13 + 9);
+  memcpy (color_changed, color_original, BLOCK);
+  edit_global_fixed_color (color_changed, rgb);
+  for (unsigned i = 0; i < BLOCK; i++)
+    {
+      uint8_t expected = color_original[i];
+      if (i >= ILLUM_COLOR && i < ILLUM_COLOR + 24)
+        expected = rgb[(i - ILLUM_COLOR) % 3];
+      if (color_changed[i] != expected)
+        return 1;
+    }
+  for (unsigned s = 0; s < 8; s++)
+    for (unsigned c = 0; c < 3; c++)
+      palette[s][c] = (uint8_t)(s * 29 + c * 7);
+  memcpy (color_changed, color_original, BLOCK);
+  edit_global_palette (color_changed, palette);
+  for (unsigned i = 0; i < BLOCK; i++)
+    {
+      uint8_t expected = color_original[i];
+      if (i >= ILLUM_COLOR && i < ILLUM_COLOR + 24)
+        expected = palette[(i - ILLUM_COLOR) / 3][(i - ILLUM_COLOR) % 3];
+      if (color_changed[i] != expected)
+        return 1;
+    }
+  for (unsigned slot = 1; slot <= 8; slot++)
+    {
+      memcpy (color_changed, color_original, BLOCK);
+      if (!edit_dpi_color (color_changed, slot, rgb))
+        return 1;
+      for (unsigned i = 0; i < BLOCK; i++)
+        {
+          unsigned offset = DPI_COLOR + (slot - 1) * 3;
+          uint8_t expected = i >= offset && i < offset + 3
+                                 ? rgb[i - offset]
+                                 : color_original[i];
+          if (color_changed[i] != expected)
+            return 1;
+        }
+    }
+  if (edit_dpi_color (color_changed, 0, rgb)
+      || edit_dpi_color (color_changed, 9, rgb))
+    return 1;
   for (unsigned pr = 0; pr < PROFILES; pr++)
     for (unsigned b = 0; b < 2; b++)
       for (unsigned i = 0; i < BLOCK; i++)
@@ -731,7 +799,7 @@ self_test (void)
         return 1;
       snap[i] ^= 1;
     }
-  puts ("PASS: packets, DPI codec, OEM LED modes/parameter transforms, "
+  puts ("PASS: packets, DPI codec, OEM LED mode/color maps, "
         "unrelated-byte preservation, snapshot roundtrip/corruption.");
   return 0;
 }
@@ -750,6 +818,9 @@ print_usage (FILE *out, const char *prog)
            "  %s snapshot FILE\n"
            "  %s restore FILE\n"
            "  %s led mode MODE [A [B]]\n"
+           "  %s led color fixed RRGGBB\n"
+           "  %s led color palette RGB1 ... RGB8\n"
+           "  %s led color dpi SLOT RRGGBB\n"
            "  %s help|-h|--help\n"
            "Sensor=3327 DPI encoding: 200..12400 by 100; high odd steps may "
            "round down.\n"
@@ -757,10 +828,11 @@ print_usage (FILE *out, const char *prog)
            "LED modes use OEM indices: off, standard, twinkle, breathing, "
            "neon, wave, slide, finger, flip, yoyo, cross, flying.\n"
            "Mode-specific A/B parameters are required; see README.\n"
+           "RGB accepts six hex digits, with an optional leading #.\n"
            "Writes are immediate and may persist. Close vendor software; do "
            "not unplug.\n",
            prog, prog, prog, prog, prog, prog, prog, prog, prog, prog, prog,
-           prog);
+           prog, prog, prog, prog);
 }
 
 static const char *
@@ -891,6 +963,58 @@ edit_illumination (uint8_t data[BLOCK], unsigned mode, unsigned a,
   data[ILLUM_MODE] = (uint8_t)mode;
   data[ILLUM_PARAM_A] = byte_a;
   data[ILLUM_PARAM_B] = byte_b;
+  return true;
+}
+
+static int
+hex_digit (char c)
+{
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  if (c >= 'a' && c <= 'f')
+    return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F')
+    return c - 'A' + 10;
+  return -1;
+}
+
+static bool
+parse_rgb (const char *text, uint8_t rgb[3])
+{
+  if (*text == '#')
+    text++;
+  if (strlen (text) != 6)
+    return false;
+  for (unsigned i = 0; i < 3; i++)
+    {
+      int high = hex_digit (text[i * 2]);
+      int low = hex_digit (text[i * 2 + 1]);
+      if (high < 0 || low < 0)
+        return false;
+      rgb[i] = (uint8_t)(high * 16 + low);
+    }
+  return true;
+}
+
+static void
+edit_global_fixed_color (uint8_t data[BLOCK], const uint8_t rgb[3])
+{
+  for (unsigned i = 0; i < 8; i++)
+    memcpy (data + ILLUM_COLOR + i * 3, rgb, 3);
+}
+
+static void
+edit_global_palette (uint8_t data[BLOCK], const uint8_t colors[8][3])
+{
+  memcpy (data + ILLUM_COLOR, colors, 8 * 3);
+}
+
+static bool
+edit_dpi_color (uint8_t data[BLOCK], unsigned slot, const uint8_t rgb[3])
+{
+  if (slot < 1 || slot > 8)
+    return false;
+  memcpy (data + DPI_COLOR + (slot - 1) * 3, rgb, 3);
   return true;
 }
 
@@ -1028,9 +1152,19 @@ main (int argc, char **argv)
   bool led_mode
       = argc >= 4 && argc <= 6 && !strcmp (argv[1], "led")
         && !strcmp (argv[2], "mode");
+  bool led_color_fixed
+      = argc == 5 && !strcmp (argv[1], "led") && !strcmp (argv[2], "color")
+        && !strcmp (argv[3], "fixed");
+  bool led_color_palette
+      = argc == 12 && !strcmp (argv[1], "led") && !strcmp (argv[2], "color")
+        && !strcmp (argv[3], "palette");
+  bool led_color_dpi
+      = argc == 6 && !strcmp (argv[1], "led") && !strcmp (argv[2], "color")
+        && !strcmp (argv[3], "dpi");
+  bool led_color = led_color_fixed || led_color_palette || led_color_dpi;
   if (!show && !show_profile && !set_dpi && !snapshot && !restore
       && !flip_wheel && !set_rate && !slot_cmd && !slot_count && !set_count
-      && !profile_cmd && !profile_dup && !led_mode)
+      && !profile_cmd && !profile_dup && !led_mode && !led_color)
     {
       print_usage (stderr, argv[0]);
       return 2;
@@ -1146,6 +1280,29 @@ main (int argc, char **argv)
                                            &led_byte_b))
         fail ("LED B parameter is outside the range supported by this mode; "
               "device not opened.");
+    }
+  unsigned led_color_slot = 0;
+  uint8_t led_colors[8][3] = { { 0 } };
+  if (led_color_fixed)
+    {
+      if (!parse_rgb (argv[4], led_colors[0]))
+        fail ("RGB color must be six hex digits (RRGGBB); device not opened.");
+    }
+  if (led_color_palette)
+    for (unsigned i = 0; i < 8; i++)
+      if (!parse_rgb (argv[4 + i], led_colors[i]))
+        fail ("Each palette entry must be six hex digits (RRGGBB); device not "
+              "opened.");
+  if (led_color_dpi)
+    {
+      char *end;
+      errno = 0;
+      unsigned long value = strtoul (argv[4], &end, 10);
+      if (errno || end == argv[4] || *end || value < 1 || value > 8)
+        fail ("DPI slot must be 1..8; device not opened.");
+      led_color_slot = (unsigned)value;
+      if (!parse_rgb (argv[5], led_colors[0]))
+        fail ("RGB color must be six hex digits (RRGGBB); device not opened.");
     }
   int fd = open_mouse ();
   uint8_t profile, slot, original[BLOCK], target[BLOCK];
@@ -1391,6 +1548,48 @@ main (int argc, char **argv)
             write_buttons (fd, p, blocks[p][1]);
         }
       printf ("Restored full snapshot from %s\n", argv[2]);
+      close (fd);
+      return 0;
+    }
+  if (led_color)
+    {
+      uint8_t color_profile = led_color_dpi ? profile : 0;
+      uint8_t color_original[BLOCK], color_target[BLOCK];
+      if (led_color_dpi && profile == 0)
+        fail ("DPI-stage colors require active profile 1..5; no write "
+              "attempted.");
+      if (read_profile (fd, color_profile, color_original))
+        fail ("Cannot read color configuration; no write attempted.");
+      memcpy (color_target, color_original, BLOCK);
+      if (led_color_fixed)
+        edit_global_fixed_color (color_target, led_colors[0]);
+      else if (led_color_palette)
+        edit_global_palette (color_target, led_colors);
+      else if (!edit_dpi_color (color_target, led_color_slot, led_colors[0]))
+        fail ("DPI slot must be 1..8; no write attempted.");
+      if (!memcmp (color_original, color_target, BLOCK))
+        {
+          puts ("Color already set; no configuration write performed.");
+          print_state (fd, true, led_color_dpi ? -1 : 0);
+          close (fd);
+          return 0;
+        }
+      commit_profile_for_active (fd, color_profile, profile, slot,
+                                 color_original, color_target);
+      if (led_color_fixed)
+        printf ("Global fixed-color table set to #%02x%02x%02x; profile 0 "
+                "indicator-enable bytes and active profile preserved.\n",
+                led_colors[0][0], led_colors[0][1], led_colors[0][2]);
+      else if (led_color_palette)
+        puts ("Global eight-color palette written to profile 0; active profile "
+             "preserved.");
+      else
+        printf ("DPI slot %u color set to #%02x%02x%02x in profile %u.\n",
+                led_color_slot, led_colors[0][0], led_colors[0][1],
+                led_colors[0][2], profile);
+      puts ("Configuration readback verified; visible LED effect remains "
+           "hardware-unverified.");
+      print_state (fd, true, led_color_dpi ? -1 : 0);
       close (fd);
       return 0;
     }

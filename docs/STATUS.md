@@ -18,6 +18,7 @@ which device fields are understood. Protocol details, offsets and evidence are i
 | All-profile config/button snapshot | `snapshot FILE` | 8c/8d (read all) | Yes |
 | Snapshot restore | `restore FILE` | 0c/0d (write all) | Yes (owner-confirmed normal restore) |
 | LED mode + effect parameters | `led mode MODE [A [B]]` | 0c + 04 | OEM encoding implemented; visible effect not hardware-verified |
+| Global and DPI-stage LED colors | `led color fixed/palette/dpi` | 0c + 04 | Table readback checked by command; visible effect not hardware-verified |
 | Self-test / offline tests | `--self-test` / `make test` | — | Yes |
 
 The wheel firmware-bug mitigation (snapshot profile 0 before the 0d write, restore
@@ -30,7 +31,7 @@ if corrupted) is part of `wheel` and is verified to recover tracking after the b
 | Button remapping (L/R/middle/side -> keyboard/media/macro) | button block 0d | Transport works; only scroll records written so far. Low risk, high value. |
 | Macro recording | 0f / 8f | Reference labels 0f (and 0f with ARG0>50) dangerous. Not attempted. |
 | X/Y scale controls | profile 74..75 | OEM code maps the sliders here and sync mirrors values in the host model; Linux has no setter and device effect is unverified. See [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md). |
-| DPI indicator and illumination colors | profile 16..47 + 104..127 | Layout is statically recovered; color setters and their activation path need capture/implementation. |
+| LED color-mode and indicator-enable switches | profile 16..23 + Windows color-mode choice | Color table writers preserve these fields; switch encoding and visible behavior need capture. |
 | Windows LED slider conversion / visible effects | profile 71..73 | Linux writes use the recovered mode enum and per-effect transforms; A/B are OEM-writer inputs, not mapped Windows slider units. Capture and verify effects on hardware. |
 | Button debounce | profile 103 | Candidate field; encoding unverified. |
 | enabled_rates / enabled_resolutions bitmaps | profile 64 / 100 | Candidate bitmasks; modifying behavior unverified. |
@@ -50,10 +51,10 @@ understanding, by status:
 - **Candidate (from reference driver or static OEM analysis, not yet validated
   here):** sensor SROM ID
   (profile 5), sensor fw size (6..7), password (8..15), DPI indicator enable
-  (16..23), illumination RGB (24..47), sensor register config (48..63), enabled
+  (16..23), global LED RGB (24..47), sensor register config (48..63), enabled
   rates (64), illumination mode/effect parameters (71/72/73), X/Y scales (74..75),
   X/Y high-bit masks (82..83), Y DPI table (92..99), enabled resolutions (100),
-  debounce (103), DPI RGB colors (104..127), OEM Sensor=3327 high-range DPI
+  debounce (103), per-profile DPI RGB colors (104..127), OEM Sensor=3327 high-range DPI
   encoding, and button types 0x00/0x02/0x03/0x06/0x08/0x09/0x0a.
 - **Unknown:** profile offsets 0..1, 3..4, 65..69, 76..81, 101..102; button types
   0x05 (rate) and 0x0b (special); the firmware-level side+right chord.
@@ -61,7 +62,7 @@ understanding, by status:
 ## Priority
 
 1. Button remapping — transport proven, single-key maps decode already known.
-2. DPI indicator colors + illumination — layout known, capture vendor app to confirm.
+2. Verify LED table/color writes and mode effects — capture vendor changes and visible device behavior.
 3. Debounce / enabled bitmaps — need controlled single-field probes with snapshots.
 4. Macros — high risk; only with a full snapshot and extreme care.
 

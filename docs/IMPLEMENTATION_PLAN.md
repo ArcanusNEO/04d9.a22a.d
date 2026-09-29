@@ -14,7 +14,7 @@ in [EXPERIMENTS.md](EXPERIMENTS.md) and [PROTOCOL.md](PROTOCOL.md).
 | DPI range / sensor | Sensor=3327 branch shows a 200 minimum and max 12400; its writer maps n=1 to raw 2 and uses a high-range marker | CLI now uses the Sensor=3327 encoder for 200..12400; 1200, 1600 and 3200 were hardware-tested | High-range physical response is not calibrated; report encoded estimates and gather readback/CPI evidence before calling the full range hardware-verified |
 | X/Y scale | X/Y sliders are copied to profile bytes 74/75; Sync mirrors their model values in the Windows app | No scale setter; X stage table is writable and Y stage table is preserved | Add a typed scale setter for bytes 74/75 after validating physical effect; Sync is a client-side mirror, not a known device mode bit |
 | Polling rate | 125/250/500/1000 choices | Same four rates, queried/set and read back | No material gap in the observed A22A path |
-| Lighting | Twelve zero-based mode indexes; six are visible; intensity/pulse controls and fixed/DPI/cycle color choices | `led mode MODE [A [B]]` writes the OEM mode enum and per-effect transforms to bytes 71..73; no color setters | Hardware effects and Windows slider-to-A/B conversion need capture; add colors only after their mappings and activation are confirmed |
+| Lighting | Twelve zero-based mode indexes; six are visible; intensity/pulse controls and fixed/DPI/cycle color choices | `led mode` writes bytes 71..73; `led color fixed/palette` writes profile-0 bytes 24..47; `led color dpi` edits bytes 104..127 in the active profile | LED effects, radio/enable controls, and color visibility need hardware capture; Windows slider-to-A/B conversion remains unknown |
 | Button mapping | UI has Office/Game button layouts and labels for mouse, DPI, report-rate, profile, light, key/media, shortcut and macro actions | Button records are readable; only wheel direction is intentionally written | Add typed, single-record mappings after correlating UI actions to the 16 on-device records |
 | Macros / Gun | Macro recorder/editor and a separate Gun editor are present | Macro commands 0x0f/0x8f and Gun/recoil features are absent | Defer. The reference marks macro operations dangerous; UI presence does not prove A22A command safety |
 | Profiles / files | Five `File` controls are written to wire profiles 1..5; a separate top-level Profile selector and `.pbin` store group local presets | Firmware profiles 0..5 can be switched and copied; no local naming/import/export feature | Preserve the distinction: wire profiles 1..5 are mapped; local preset directories and files are not |
@@ -31,11 +31,11 @@ not the recorded live baseline.
 
 ## Current inconsistencies to resolve
 
-1. **LED encoding is statically mapped, but the physical effect is unverified.**
-   `led mode MODE [A [B]]` now uses the OEM zero-based enum and mode-specific
-   transforms for bytes 71..73. The A/B inputs are not yet mapped to the
-   Windows sliders, and no controlled A22A lighting write/visual check is
-   recorded; keep those limits explicit in help and status documentation.
+1. **LED encodings are statically mapped, but physical effects are unverified.**
+   Mode/parameter writes and the global/per-stage RGB table writers preserve
+   unrelated bytes and verify readback. The A/B inputs are not mapped to Windows
+   sliders, and radio/enable controls and visible effects still need a controlled
+   A22A capture; keep those limits explicit in help and status documentation.
 2. **High-range DPI calibration remains unverified.** The Linux encoder now
    mirrors the OEM Sensor=3327 write transform, and `show` decodes bit 6 as an
    estimate. No high-range setting has been written and calibrated on the
@@ -60,7 +60,8 @@ not the recorded live baseline.
 - Keep LED writes on the recovered OEM mode/parameter encoding. Expose A/B as
   writer inputs rather than claiming a generic brightness/speed mapping. Profile
   readback verifies the bytes, but mark visible behavior unverified until a
-  controlled hardware experiment confirms it.
+  controlled hardware experiment confirms it. Color-table setters preserve the
+  profile-0 indicator-enable bytes and do not invent a color-mode selector.
 - Keep the CLI's X DPI wording marked as an estimate. Its write mapping follows
   the OEM Sensor=3327 code; physical high-range response still needs validation.
 - Keep the owner-confirmed normal restore status, but make every failure path
@@ -123,12 +124,13 @@ needed.
 
 ### 4. Add lighting only from captured encodings
 
-The CLI now uses an explicit table for the OEM mode indexes and per-mode
-byte-72/73 transforms in [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md). Keep
-the static encoding evidence separate from hardware effect verification. Next,
-capture slider changes and fixed/DPI/cycle color writes before adding typed color
-operations. Preserve unrelated profile bytes and require readback plus visible
-output. Hidden UI modes are not part of the initial support target.
+The CLI uses the OEM mode indexes and per-mode byte-72/73 transforms, writes the
+profile-0 fixed/global palette, and edits per-profile DPI RGB entries described
+in [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md). Keep static encoding
+evidence separate from hardware effect verification. Next, capture the UI
+radio/enable controls, slider changes, and per-DPI color selector. Preserve
+unrelated profile bytes and require readback plus visible output. Hidden UI modes
+are not part of the initial support target.
 
 ### 5. Add button actions; keep macro support separate
 

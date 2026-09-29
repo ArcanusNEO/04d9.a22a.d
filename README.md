@@ -33,8 +33,9 @@ rate (`rate`), profile switching and duplication (`profile`), wheel direction
 (`wheel`), full snapshot/restore, and LED mode/parameter writes using the
 statically recovered Windows-writer encoding.
 
-Not implemented: X/Y scale controls, RGB, remapping, macros, profile rename,
-firmware access, GUI, daemon, udev rules, or support for other Holtek VID/PIDs.
+Not implemented: LED color-mode/indicator-enable switches, X/Y scale controls,
+button remapping, macros, profile rename, firmware access, GUI, daemon, udev
+rules, or support for other Holtek VID/PIDs.
 
 LED mode writes use the recovered Windows mode enum and per-effect transforms.
 The visible device effects and the Windows slider-to-A/B conversion have not
@@ -81,6 +82,8 @@ sudo ./src/main profile -d 1 2  # copy profile 1 -> 2
 sudo ./src/main wheel        # flip scroll direction
 sudo ./src/main led mode breathing 6 # OEM mode 3; B=6 -> bytes 71..73: 3,0,5
 sudo ./src/main led mode wave 80 3   # OEM mode 5; A/B -> bytes 5,80,3
+sudo ./src/main led color fixed ff8040 # fill global color table
+sudo ./src/main led color dpi 4 00ff00 # set stage 4 in active profile
 ```
 
 `slot SLOT` selects only; it does not auto-raise the count and reports failure
@@ -110,8 +113,30 @@ the mode:
 The A/B values are inputs to the recovered OEM writer transform, not a claim
 that the vendor application's 0..255 sliders map directly to these values. A
 successful command verifies the profile block and activation readback; visible
-lighting behavior remains unverified on the attached mouse. LED color setters
-are not implemented.
+lighting behavior remains unverified on the attached mouse.
+
+### LED colors
+
+Colors are six hexadecimal digits (`RRGGBB`); a leading `#` is also accepted
+(quote it in a shell command). The global color table is in profile 0 at bytes
+24..47, while eight per-DPI colors are stored at bytes 104..127 of profiles
+1..5:
+
+```sh
+sudo ./src/main led color fixed ff8040
+sudo ./src/main led color palette ff0000 ff8000 ffff00 80ff00 00ffff \
+  0080ff 8000ff ff00ff
+sudo ./src/main led color dpi 4 00ff00
+```
+
+`fixed` repeats one RGB value across the eight profile-0 entries; `palette`
+writes eight distinct entries. Both preserve profile-0 indicator-enable bytes
+16..23 and restore the previously active profile after the write. `dpi SLOT`
+updates one color entry in the active profile (1..5) and preserves the other
+seven entries. The command writes the recovered table layout and checks the
+configuration readback; it does not change the vendor application's color-mode
+radio choice or indicator-enable switches. Those controls and the physical LED
+response still need a vendor trace and hardware verification.
 
 The CLI uses the OEM Sensor=3327 stage encoder for 200..12400. High-range odd
 steps can map to the preceding 200-CPI code value; the reported number is an

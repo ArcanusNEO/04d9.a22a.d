@@ -184,8 +184,8 @@ field-understanding summary. Priority work:
    vertical travel. OS cursor movement is unsuitable because of acceleration/scaling.
 4. Validate supported DPI steps/range and high-mask semantics with separately agreed
    experiments. Preserve unknown fields and record each tested value.
-5. Capture the vendor application (if available) to confirm illumination and DPI
-   indicator color encodings before implementing them.
+5. Capture the vendor application (if available) to confirm color-mode/indicator
+   enable controls, the per-DPI color-selector path, and visible LED effects.
 6. Investigate whether 04 activation is required and whether settings survive power
    cycles, only when a disruptive test is acceptable.
 

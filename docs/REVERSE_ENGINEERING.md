@@ -186,7 +186,10 @@ bytes 16..23 and the global eight-color table at 24..47 of profile 0. Fixed-colo
 mode duplicates one RGB triple into all eight entries; palette modes copy eight
 RGB triples. The three UI radio choices are internally numbered 0=fixed, 1=DPI,
 2=cycle. The DPI-stage color selector uses a separate per-stage path; verify its
-exact UI-to-wire mapping before implementing writes.
+exact UI-to-wire mapping and visual effect on hardware. Linux exposes explicit
+writers for the recovered global table and the profile's eight RGB triples; it
+does not change the radio choice or indicator-enable bytes because their selector
+encoding is not established.
 
 The performance-page handler at `0041d7f0` stores the X/Y slider values as
 per-file model fields. The checkbox handler at `0041de40` copies X to Y when Sync is turned
@@ -206,10 +209,13 @@ Windows host settings, not all mouse HID commands.
 The global color writer (`0041aed0`) constructs the profile-0 config block. It
 copies eight DPI-indicator enable bytes into offsets 16..23 and writes eight RGB
 triples at offsets 24..47. In fixed-color mode it repeats one RGB value for all
-eight entries; otherwise it copies an eight-color palette. The UI also exposes
-per-DPI color selection, but its exact profile-byte write path is not yet
-isolated. Mode and per-effect parameter transforms are statically recovered;
-hardware response and exact slider-to-parameter conversion remain unverified.
+eight entries; otherwise it copies an eight-color palette. Linux's `led color`
+commands update this table while preserving the enable bytes. The DPI-stage
+writer edits one RGB triple at 104+3*(slot-1) in the active profile, based on the
+known eight-entry block layout; the exact vendor UI write path is not isolated.
+Neither path proves the attached mouse's visible behavior. Mode and per-effect
+parameter transforms are statically recovered; hardware response and exact
+slider-to-parameter conversion remain unverified.
 
 ## A22A-specific configuration evidence
 
@@ -264,7 +270,7 @@ transforms; visible behavior and slider conversion still need hardware capture.
    6300 and 8000 DPI, then compare the physical CPI response. This will resolve
    whether its live data follows the OEM Sensor=3327 path.
 2. Capture X/Y scale and sync changes and compare profile bytes 74/75.
-3. Capture one lighting mode, intensity and color change at a time; map the
-   corresponding offsets and activation/readback behavior.
+3. Capture one lighting mode, intensity, color-radio, indicator-enable and
+   per-DPI color change at a time; compare offsets and verify the visible effect.
 4. Recover the remaining button-action enum from the table near `0041b2b0` and
    treat the command-0x0f macro path as a separate, high-risk protocol.

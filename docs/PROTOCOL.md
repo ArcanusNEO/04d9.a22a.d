@@ -203,7 +203,7 @@ reliable interpretation yet.
 | 6..7 | 2 | sensor fw size | candidate | Little endian; profile 0 = `fe 0f` (4094) |
 | 8..15 | 8 | password | candidate | Not used for local API B transport |
 | 16..23 | 8 | DPI indicator enable | candidate | Per-DPI indicator LED enable |
-| 24..47 | 24 | illumination RGB | candidate | OEM profile-0 writer stores eight RGB triples; hardware behavior unverified |
+| 24..47 | 24 | global LED RGB table | implemented from OEM analysis | `led color fixed/palette` writes eight RGB triples in profile 0; preserves flags at 16..23; visible effect unverified |
 | 48..63 | 16 | sensor reg config | candidate | Eight register/value pairs; profile 1..5 = `2e 10 42 00 00...`; NDA |
 | 64 | 1 | enabled rates | candidate | Bitmask; observed `8f` (high bits uninterpreted) |
 | 65..69 | 5 | (padding) | unknown | |
@@ -218,7 +218,7 @@ reliable interpretation yet.
 | 100 | 1 | enabled resolutions | candidate | Bitmask; observed `ff` |
 | 101..102 | 2 | (padding) | unknown | |
 | 103 | 1 | debounce | candidate | Milliseconds; observed 20 (0x14) |
-| 104..127 | 24 | DPI RGB colors | candidate | Eight RGB entries (3 bytes each) |
+| 104..127 | 24 | per-profile DPI RGB colors | Linux writer implemented | Eight RGB entries; `led color dpi` writes one triple in the active profile; vendor UI path and visible effect unverified |
 
 ### Field status by profile
 
